@@ -8,14 +8,14 @@ import io
 import sys
 from pathlib import Path
 
-import geopandas as gpd 
+import h5py
 import numpy as np
-import pandas as pd
 import rasterio as rio
 from rasterio.io import DatasetReader
-from rasterio.windows import Window, transform
+from rasterio.windows import Window
 from rasterio.transform import Affine
 
+from utils.tool import h5_list
 class Preprocess: 
     """
     Preprocess class for image IO, tilling.
@@ -31,7 +31,6 @@ class Preprocess:
         self.dataset = rio.open(self.fpth)
         self.output_path = Path(output_path).absolute()
         self.output_path.mkdir(exist_ok=True)
-        self.output_path.joinpath('report').mkdir(exist_ok=True)
         self.tile_size = tile_size
         if not isinstance(self.tile_size, int):
             raise TypeError(f"Tile_size tuple should be Int, not {type(self.tile_width)}")
@@ -72,6 +71,7 @@ class Preprocess:
                 dst.write(padded_data)
             memfile.seek(0)
             self.dataset_padded = rio.open(memfile) 
+
         # Make meshgrid for x and y label of all tiles
         tile_indices_x = np.arange(n_tiles_x)
         tile_indices_y = np.arange(n_tiles_y)
@@ -91,7 +91,25 @@ class Preprocess:
             for start_x, start_y in zip(flat_tile_x, flat_tile_y)
             ])
             
-        # Save tiles 
+        # Save tiles to h5
+        
+        tile_stack = []
+        profile_stack = []
+        tile_profile = self.dataset_padded.profile
+        for idx, window in enumerate(windows):
+            tile_data = self.dataset_padded.read(window=window)
+            tile_profile.update({
+            'transform': self.dataset_padded.window_transform(window),
+            'height': window.height,
+            'width': window.width,
+        })
+            tile_stack.append(tile_data)
+            profile_stack.append(tile_profile)
+            sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
+            sys.stdout.flush()
+        tile_total = np.stack(tile_stack, axis=0)
+        windows_h5 = h5_list(windows)
+        profiles_h5 = h5_list(np.array(profile_stack))
         report = {'file name': self.fpth.name,
                 'tile size': self.tile_size,
                 'buffer size': self.buffer_size,
@@ -101,20 +119,12 @@ class Preprocess:
                 'crs': str(self.dataset_padded.crs),
                 'band': self.dataset_padded.count
                 }
-        pd.DataFrame(report, index=[0]).to_excel(self.output_path.joinpath(f'report/{self.fpth.stem}.xlsx'), index=False)
-
-        tile_profile = self.dataset_padded.profile
-        for idx, window in enumerate(windows):
-            tile_data = self.dataset_padded.read(window=window)
-            tile_profile.update({
-            'transform': self.dataset_padded.window_transform(window),
-            'height': window.height,
-            'width': window.width,
-        })
-            tile_path = f'{self.output_path}/{self.fpth.stem}_{window.col_off}_{window.row_off}.{self.fpth.suffix}'
-            sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
-            sys.stdout.flush()
-            with rio.open(tile_path, 'w', **tile_profile) as dst:
-                dst.write(tile_data)
+        with h5py.File(f'{self.output_path}/{self.fpth.stem}_tiles.h5', 'w') as hf:
+            dset = hf.create_dataset(f'tiles', data=tile_total)
+            hf.create_dataset(f'windows', data=windows_h5)
+            hf.create_dataset(f'profiles', data=profiles_h5)
+            for key, value in report.items():
+                dset.attrs[key] = value
         print(f'\n Tiles saved to {self.output_path}')
+        
     
