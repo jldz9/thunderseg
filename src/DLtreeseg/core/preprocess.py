@@ -18,7 +18,7 @@ from rasterio.transform import Affine
 from utils.tool import h5_list
 class Preprocess: 
     """
-    Preprocess class for image IO, tilling.
+    Preprocess module for image IO, tilling.
     """
     def __init__(self,
                  fpth: str,
