@@ -8,14 +8,13 @@ import io
 import sys
 from pathlib import Path
 
-import h5py
 import numpy as np
 import rasterio as rio
 from rasterio.io import DatasetReader
 from rasterio.windows import Window
 from rasterio.transform import Affine
 
-from utils.tool import h5_list
+from utils.tool import pack_h5_list, save_h5
 class Preprocess: 
     """
     Preprocess class for image IO, tilling.
@@ -34,16 +33,19 @@ class Preprocess:
         self.tile_size = tile_size
         if not isinstance(self.tile_size, int):
             raise TypeError(f"Tile_size tuple should be Int, not {type(self.tile_width)}")
-        
         self.buffer_size = buffer_size
         if not isinstance(self.buffer_size, int) :
             raise TypeError(f"Buffer size should be Int, not {type(self.buffer_size)}")
-        self.tile_image()
         if debug is True:
             print('debug')
+        # Run when init
+        self._tile_image()
     
     
-    def tile_image(self):
+    def _tile_image(self):
+        """
+        Cut input image into square tiles with buffer and preserver geoinformation for each tile. 
+        """
         profile = self.dataset.profile.copy()
         height = profile['height']
         width = profile['width']
@@ -72,7 +74,7 @@ class Preprocess:
             memfile.seek(0)
             self.dataset_padded = rio.open(memfile) 
 
-        # Make meshgrid for x and y label of all tiles
+        # Make meshgrid to create 2d (x,y) index of all tiles
         tile_indices_x = np.arange(n_tiles_x)
         tile_indices_y = np.arange(n_tiles_y)
         tile_x, tile_y = np.meshgrid(tile_indices_x, tile_indices_y)
@@ -91,12 +93,11 @@ class Preprocess:
             for start_x, start_y in zip(flat_tile_x, flat_tile_y)
             ])
             
-        # Save tiles to h5
-        
+        # loop stack all tiles into one (tiles, channels, rows, columns) matrix
         tile_stack = []
         profile_stack = []
-        tile_profile = self.dataset_padded.profile
         for idx, window in enumerate(windows):
+            tile_profile = self.dataset_padded.profile
             tile_data = self.dataset_padded.read(window=window)
             tile_profile.update({
             'transform': self.dataset_padded.window_transform(window),
@@ -107,9 +108,8 @@ class Preprocess:
             profile_stack.append(tile_profile)
             sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
             sys.stdout.flush()
+        print()
         tile_total = np.stack(tile_stack, axis=0)
-        windows_h5 = h5_list(windows)
-        profiles_h5 = h5_list(np.array(profile_stack))
         report = {'file name': self.fpth.name,
                 'tile size': self.tile_size,
                 'buffer size': self.buffer_size,
@@ -119,12 +119,51 @@ class Preprocess:
                 'crs': str(self.dataset_padded.crs),
                 'band': self.dataset_padded.count
                 }
-        with h5py.File(f'{self.output_path}/{self.fpth.stem}_tiles.h5', 'w') as hf:
-            dset = hf.create_dataset(f'tiles', data=tile_total)
-            hf.create_dataset(f'windows', data=windows_h5)
-            hf.create_dataset(f'profiles', data=profiles_h5)
-            for key, value in report.items():
-                dset.attrs[key] = value
-        print(f'\n Tiles saved to {self.output_path}')
-        
+        self._stack_tiles = tile_total
+        self._windows = windows
+        self._profiles = profile_stack
+        self._report = report
+    @property
+    def data(self):
+        return self._stack_tiles
+    @property
+    def window(self):
+        return self._windows
+    @property
+    def profile(self):
+        return self._profiles
+    @property
+    def summary(self):
+        return self._report
+    @property
+    def ori_data(self) -> DatasetReader:
+        """
+        This returns the rasterio dataset for the padded original raster
+        """
+        return self.dataset_padded
+    
+    def write_h5(self, save_path:str):
+        """
+        Save tiles into HDF5 dataset
+        """
+        save_h5(save_path=save_path,
+                data = self._stack_tiles,
+                attrs= self._report,
+                windows = pack_h5_list(self._windows),
+                profiles = pack_h5_list(self._profiles)
+                )
+    
+    def write_gis(self, path_to_dir:str):
+        """
+        Save individual tiles into raster
+        """
+        path_to_dir = Path(path_to_dir)
+        path_to_dir.mkdir(parents=True, exist_ok=True)
+        tiles = [self._stack_tiles[i] for i in range(self._stack_tiles.shape[0])]
+        for data, window, profile in zip(tiles, self._windows, self._profiles):
+            tile_path = f'{path_to_dir}/{self.fpth.stem}_{window.row_off}_{window.col_off}.{self.fpth.suffix}'
+            with rio.open(tile_path, 'w', **profile) as dst:
+                dst.write(data)
+        print(f'Tiles exported in {path_to_dir}')
+
     
