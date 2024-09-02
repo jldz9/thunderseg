@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Image preprocess module for DLtreeseg, include all necessary image IO, tilling
+Image preprocess module for DLtreeseg, include image IO, tilling
 """
 import io
 import sys
@@ -14,7 +14,8 @@ from rasterio.io import DatasetReader
 from rasterio.windows import Window
 from rasterio.transform import Affine
 
-from utils.tool import pack_h5_list, save_h5
+from utils.tool import pack_h5_list
+from core.io import save_h5, save_gis
 class Preprocess: 
     """
     Preprocess module for image IO, tilling.
@@ -152,6 +153,7 @@ class Preprocess:
                 windows = pack_h5_list(self._windows),
                 profiles = pack_h5_list(self._profiles)
                 )
+        return print()
     
     def write_gis(self, path_to_dir:str):
         """
@@ -161,9 +163,8 @@ class Preprocess:
         path_to_dir.mkdir(parents=True, exist_ok=True)
         tiles = [self._stack_tiles[i] for i in range(self._stack_tiles.shape[0])]
         for data, window, profile in zip(tiles, self._windows, self._profiles):
-            tile_path = f'{path_to_dir}/{self.fpth.stem}_{window.row_off}_{window.col_off}.{self.fpth.suffix}'
-            with rio.open(tile_path, 'w', **profile) as dst:
-                dst.write(data)
-        print(f'Tiles exported in {path_to_dir}')
+            tile_path = Path(f'{path_to_dir}/{self.fpth.stem}_{window.row_off}_{window.col_off}{self.fpth.suffix}')
+            save_gis(tile_path, data, profile)
+        return print()
 
     
