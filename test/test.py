@@ -11,4 +11,4 @@ fpath = Path('/home/jldz9/DL/DL_drake/Drake/Ref/Drake20220928_MS.tif')
 output_path = Path('/home/jldz9/DL/output')
 
 a = preprocess.Preprocess(fpth=fpath, output_path=output_path)
-a.save_tiles('/home/jldz9/DL/Drake20220928_MS.h5')
+a.write_gis('/home/jldz9/DL/')
