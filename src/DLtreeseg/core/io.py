@@ -11,6 +11,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import rasterio as rio
+import torch
 
 # save hdf5 to local drive
 def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
