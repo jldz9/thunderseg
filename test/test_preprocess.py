@@ -1,14 +1,12 @@
-import sys
-sys.path.append('/home/jldz9/DL/DL_packages/DLtreeseg/src/DLtreeseg')
 from pathlib import Path
 import rasterio as rio
 import numpy as np
 from rasterio.windows import Window, transform
 from rasterio.transform import from_origin
-import DLtreeseg.core.preprocess as preprocess
+from DLtreeseg.core.preprocess import Tile
 
 fpath = Path('/home/jldz9/DL/DL_drake/Drake/Ref/Drake20220928_MS.tif')
 output_path = Path('/home/jldz9/DL/output')
 
-a = preprocess.Preprocess(fpth=fpath, output_path=output_path)
-a.write_gis('/home/jldz9/DL/')
+a = Tile(fpth=fpath, output_path=output_path, buffer_size=20, tile_size=100)
+print(())
