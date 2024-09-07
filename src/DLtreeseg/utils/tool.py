@@ -250,7 +250,7 @@ class COCO_format:
         else:
             self.COCO.update(annotations)
     
-    def COCO(self):
+    def data(self):
         return self.COCO
     
     def save_json(self, save_path:str):
