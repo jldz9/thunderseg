@@ -14,5 +14,5 @@ coco.add_annotations(id=[1,2,3,4],
                      keypoints=[],
                      num_keypoints=[],
                      bbox_mode='xywh')
-coco.COCO
+coco.data
 coco.save_json('/home/jldz9/DL/COCO.json')
