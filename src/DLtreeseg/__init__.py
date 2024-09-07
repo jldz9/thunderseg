@@ -1,1 +1,1 @@
-from core import preprocess
+from DLtreeseg.core import preprocess
