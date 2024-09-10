@@ -9,4 +9,4 @@ fpath = Path('/home/jldz9/DL/DL_drake/Drake/Ref/Drake20220928_MS.tif')
 output_path = Path('/home/jldz9/DL/output')
 
 a = Tile(fpth=fpath, output_path=output_path, buffer_size=20, tile_size=100)
-print(())
+a.to_gis(Path('/home/jldz9/DL/DL_drake/tiles'))
