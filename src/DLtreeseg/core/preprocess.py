@@ -15,8 +15,8 @@ from rasterio.io import DatasetReader
 from rasterio.windows import Window
 from rasterio.transform import Affine
 
-from utils.tool import pack_h5_list
-from core.io import save_h5, save_gis
+from DLtreeseg.utils import pack_h5_list
+from DLtreeseg.core import save_h5, save_gis
 
 class Tile: 
     """
@@ -155,7 +155,7 @@ class Tile:
         """
         return self._dataset_padded
     
-    def write_h5(self, save_path:str):
+    def to_h5(self, save_path:str):
         """
         Save tiles into HDF5 dataset
         """
@@ -167,7 +167,7 @@ class Tile:
                 )
         return print()
     
-    def write_gis(self, path_to_dir:str):
+    def to_gis(self, path_to_dir:str):
         """
         Save individual tiles into raster
         """
