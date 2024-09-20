@@ -1,2 +1,2 @@
-from .core import io, preprocess, postprocess, train
-from .utils import tool
+from DLtreeseg.core import io, preprocess, postprocess, train
+from DLtreeseg.utils import tool
