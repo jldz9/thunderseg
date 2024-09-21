@@ -20,10 +20,8 @@ def unpack_h5_list(data: np.void):
     return pickle.loads(data.tobytes())
 
 
-
 class COCO_format:
-    """
-    Make COCO Json format (https://cocodataset.org/#home) for 
+    """Make COCO Json format (https://cocodataset.org/#home) for images
     """
     def __init__(self, 
                  info: dict = {}):
