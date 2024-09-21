@@ -11,6 +11,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import rasterio as rio
+import shapefile
 import torch
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
@@ -128,3 +129,12 @@ def setup_cfg(
     cfg.RESIZE = resize
     cfg.INPUT.MIN_SIZE_TRAIN = 1000
     return cfg
+
+def shp2list(fpth:str):
+    fpth = Path(fpth)
+    sf = shapefile.Reader(fpth)
+    flat_coords = []
+    for shape in sf.shapes():
+        coords = shape.points
+        flat_coords.append([coord for pair in coords for coord in pair])
+    return flat_coords
