@@ -7,7 +7,6 @@ Tools use by DLtreeseg
 import json
 import pickle
 from pathlib import Path
-from dateutil import parser
 
 from detectron2.structures import BoxMode
 import numpy as np
@@ -19,6 +18,8 @@ def pack_h5_list(data: list):
 # unpack numpy scalar data to list
 def unpack_h5_list(data: np.void):
     return pickle.loads(data.tobytes())
+
+
 
 class COCO_format:
     """
@@ -79,7 +80,7 @@ class COCO_format:
                 "bbox": list(annotations_update[3]), #bounding box, required, default use XYXY absolute coordinate
                 "area": int(annotations_update[4]), # measured in pixels (10px * 20px = 200px)
                 "iscrowd": int(annotations_update[5]), # specifies whether the segmentation is for a single object (0) or  not possible to delineate the individually from other similar objects. (1)
-                "segmentation": list(annotations_update[6]), # A list of list of points [[x1,y1, x2,y2 ...]] define the shape of the object, optional                
+                "segmentation": list(annotations_update[6]), # A list of list of points [[x1,y1, x2,y2 ...], [x11, y11, x22, y22, ...]] define the shape of the object, optional                
                 "keypoints" : list(annotations_update[7]), #Optional, list of key points with format [x1,y1,v1, ...,xn,yn,vn] visibility (0(no label),1(label, visable),2(label, not visable))
                 "num_keypoints": int(annotations_update[8]), # number of key points
                 "bbox_mode": annotations_update[9] # Bounding box mod, use (x,y) of top left and (x,y) of bottom right, required
