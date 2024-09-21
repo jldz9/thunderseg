@@ -20,8 +20,9 @@ from DLtreeseg.utils import pack_h5_list
 from DLtreeseg.core import save_h5, save_gis
 
 class Tile: 
-    """
-    Preprocess module for image IO, tilling.
+    """Preprocess module for image IO, tilling.
+    
+    Use to tile input raster into certain give size tiles, add buffer around tiles to reduce edge effect. 
     """
     def __init__(self,
                  fpth: str,
@@ -30,14 +31,18 @@ class Tile:
                  buffer_size : int = 10,
                  debug = False
                  ):
-        """
-        tile_size: The tile size of individual tiles, all tiles will be cut into squares. Unit: meter
-        buffer_size: Buffer around tiles. Unit:meter
+        """ Initializes parameters
+        Args:
+            fpth: Path to single raster file.
+            output_path: Output file path, default is current directory.
+            tile_size: Tile size, all tiles will be cut into squares. Unit: meter
+            buffer_size: Buffer size around tiles. Unit:meter
+            debug: Switch to turn on debug
         """
         self.fpth = Path(fpth).absolute()
         self._dataset = rio.open(self.fpth)
-        self.output_path = Path(output_path).absolute()
-        self.output_path.mkdir(exist_ok=True)
+        self._output_path = Path(output_path).absolute()
+        self._output_path.mkdir(exist_ok=True)
         self._tile_size = tile_size
         if not isinstance(self._tile_size, int):
             raise TypeError(f"Tile_size tuple should be Int, not {type(self.tile_width)}")
@@ -46,32 +51,33 @@ class Tile:
             raise TypeError(f"Buffer size should be Int, not {type(self._buffer_size_pixel_x)}")
         if debug is True:
             print('debug')
-        # Run when init
 
-    @staticmethod
-    def _get_window(dataset: DatasetReader, tile_size, buffer_size, ):
-        profile = dataset.profile.copy()
+    def _get_window(self):
+        """Make rasterio windows for raster tiles, pad original dataset to makesure all tiles size looks the same.
+        Tiles will overlap on right and bottom buffer.         
+        """
+        profile = self._dataset.profile.copy()
         y = profile['height']
         x = profile['width']
-        transform = dataset.profile['transform']
+        transform = self._dataset.profile['transform']
         # Convert meter tile size to pixel tile size
-        tile_size_pixel_x = int(np.ceil(tile_size / dataset.res[0]))
-        tile_size_pixel_y = int(np.ceil(tile_size / dataset.res[1]))
-        buffer_size_pixel_x = int(np.ceil(buffer_size / dataset.res[0]))
-        buffer_size_pixel_y = int(np.ceil(buffer_size / dataset.res[1]))
+        tile_size_pixel_x = int(np.ceil(self._tile_size / self._dataset.res[0]))
+        tile_size_pixel_y = int(np.ceil(self._tile_size / self._dataset.res[1]))
+        buffer_size_pixel_x = int(np.ceil(self._buffer_size / self._dataset.res[0]))
+        buffer_size_pixel_y = int(np.ceil(self._buffer_size / self._dataset.res[1]))
         # Calculate number of tiles along height and width with buffer.
         n_tiles_x = int(np.ceil((x + buffer_size_pixel_x) / (buffer_size_pixel_x + tile_size_pixel_x)))
         n_tiles_y = int(np.ceil((y + buffer_size_pixel_y) / (buffer_size_pixel_y + tile_size_pixel_y)))
         
         # Add buffer to original raster to make sure every tiles has same size.
-        data = dataset.read()
+        data = self._dataset.read()
         data = np.where(data<0, 0, data)
         pad = ((0,0),
                 (buffer_size_pixel_y, n_tiles_y * (tile_size_pixel_y + buffer_size_pixel_y) - y),
                 (buffer_size_pixel_x, n_tiles_x * (tile_size_pixel_x + buffer_size_pixel_x) - x)
                 )
         padded_data = np.pad(data, pad_width=pad, mode='constant', constant_values=0)
-        profile.update({
+        self._profile = profile.update({
             'height': padded_data.shape[1],
             'width': padded_data.shape[2],
             'transform': Affine(transform[0],transform[1], transform[2]- buffer_size_pixel_x*transform[0],
@@ -84,7 +90,7 @@ class Tile:
         flat_tile_y = tile_index_y.flatten()
 
         # Make windows for all tiles.
-        windows = np.array([
+        self._windows = np.array([
             Window(
             max(((start_x * (tile_size_pixel_x + (2 * buffer_size_pixel_x)) - start_x * buffer_size_pixel_x), 0)),
             max(((start_y * (tile_size_pixel_y + (2 * buffer_size_pixel_y)) - start_y * buffer_size_pixel_x), 0)),
@@ -93,70 +99,72 @@ class Tile:
             ) 
             for start_x, start_y in zip(flat_tile_x, flat_tile_y)
             ])
-        dataset.close()
-        return padded_data, profile, windows
+        self._dataset.close()
+        memfile = MemoryFile()
+        with memfile.open(**profile) as dst:
+            dst.write(padded_data)
+        self._dataset = memfile.open()
 
-    def resample(self, new_resolution):
+    def resample(self, new_resolution: float):
+        """Resample original raster to certain resolution (meter).
+        Args: 
+            new_resolution: the resolution of new raster
+        """
         print(f'Resampling raster to {new_resolution} m')
-        profile = self._dataset.profile.copy()
-        old_transform = profile['transform']
-        new_width= int(np.round((self._dataset.bounds.right - self._dataset.bounds.left) / new_resolution))
-        new_height = int(np.round((self._dataset.bounds.top - self._dataset.bounds.bottom) / new_resolution))
-        profile.update({
-            'height': new_height,
-            'width': new_width,
-            'transform': Affine(new_resolution, old_transform.b, old_transform.c, 
-                                old_transform.d, -new_resolution, old_transform.f)
+        with rio.open(self.fpth) as ori_dataset:
+            ori_dataset = rio.open(self.fpth)
+            profile = ori_dataset.profile.copy()
+            old_transform = profile['transform']
+            new_width= int(np.round((ori_dataset.bounds.right - ori_dataset.bounds.left) / new_resolution))
+            new_height = int(np.round((ori_dataset.bounds.top - ori_dataset.bounds.bottom) / new_resolution))
+            profile.update({
+                'height': new_height,
+                'width': new_width,
+                'transform': Affine(new_resolution, old_transform.b, old_transform.c, 
+                                    old_transform.d, -new_resolution, old_transform.f)
 
-        })
-        data = self._dataset.read(
-            out_shape = (self._dataset.count, new_height, new_width),
-            resampling = Resampling.gauss
-        )
-        with MemoryFile() as memfile:
-            with memfile.open(**profile) as dst:
-                dst.write(data)
-            self._dataset = memfile.open()
+            })
+            data = ori_dataset.read(
+                out_shape = (ori_dataset.count, new_height, new_width),
+                resampling = Resampling.gauss
+            )
+        memfile = MemoryFile()
+        with memfile.open(**profile) as dst:
+            dst.write(data)
+        self._dataset = memfile.open()
 
     def tile_image(self):
         """
         Cut input image into square tiles with buffer and preserver geoinformation for each tile. 
-        """
-        padded_data, profile, self._windows = Tile._get_window(self._dataset, self._tile_size, self._buffer_size)
-        with MemoryFile() as memfile:
-            with memfile.open(**profile) as dst:
-                dst.write(padded_data)
-
-            self._dataset = memfile.open()
-                   
-        # loop stack all tiles into one (tiles, channels, rows, columns) matrix
-            tiles_list = []
-            self._profiles = []
-            self._coco_dicts = []
-            num_tiles = len(self._windows)
-            for idx, window in enumerate(self._windows):
-                tile_profile = self._dataset.profile
-                tile_data = self._dataset.read(window=window)
-                tile_profile.update({
-                'transform': self._dataset.window_transform(window),
-                'height': window.height,
-                'width': window.width,
-            })
-                tiles_list.append(tile_data)
-                self._profiles.append(tile_profile)
-                sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
-                sys.stdout.flush()
-            print()
-            self._stack_tiles = np.stack(tiles_list, axis=0)
-            self._report = {'file name': self.fpth.name,
-                    'tile size': self._tile_size,
-                    'buffer size': self._buffer_size,
-                    'total tiles': num_tiles,
-                    'original size': str(rio.open(self.fpth).shape),
-                    'buffed size': str(self._dataset.shape),
-                    'crs': str(self._dataset.crs),
-                    'band': self._dataset.count
-                    }
+        """         
+        self._get_window()
+        tiles_list = []
+        self._profiles = []
+        self._coco_dicts = []
+        num_tiles = len(self._windows)
+        for idx, window in enumerate(self._windows):
+            tile_profile = self._dataset.profile
+            tile_data = self._dataset.read(window=window)
+            tile_profile.update({
+            'transform': self._dataset.window_transform(window),
+            'height': window.height,
+            'width': window.width,
+        })
+            tiles_list.append(tile_data)
+            self._profiles.append(tile_profile)
+            sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
+            sys.stdout.flush()
+        print()
+        self._stack_tiles = np.stack(tiles_list, axis=0)
+        self._report = {'file name': self.fpth.name,
+                'tile size': self._tile_size,
+                'buffer size': self._buffer_size,
+                'total tiles': num_tiles,
+                'original size': str(rio.open(self.fpth).shape),
+                'buffed size': str(self._dataset.shape),
+                'crs': str(self._dataset.crs),
+                'band': self._dataset.count
+                }
     
     @property
     def data(self):
