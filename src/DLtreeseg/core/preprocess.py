@@ -11,9 +11,10 @@ from pathlib import Path
 
 import numpy as np
 import rasterio as rio
-from rasterio.io import DatasetReader
+from rasterio.io import DatasetReader, MemoryFile
 from rasterio.windows import Window
 from rasterio.transform import Affine
+from rasterio.enums import Resampling
 
 from DLtreeseg.utils import pack_h5_list
 from DLtreeseg.core import save_h5, save_gis
@@ -37,101 +38,126 @@ class Tile:
         self._dataset = rio.open(self.fpth)
         self.output_path = Path(output_path).absolute()
         self.output_path.mkdir(exist_ok=True)
-        self.tile_size = tile_size
-        if not isinstance(self.tile_size, int):
+        self._tile_size = tile_size
+        if not isinstance(self._tile_size, int):
             raise TypeError(f"Tile_size tuple should be Int, not {type(self.tile_width)}")
-        self.buffer_size = buffer_size
-        if not isinstance(self.buffer_size, int) :
+        self._buffer_size = buffer_size
+        if not isinstance(self._buffer_size, int) :
             raise TypeError(f"Buffer size should be Int, not {type(self._buffer_size_pixel_x)}")
         if debug is True:
             print('debug')
         # Run when init
-        self._tile_image()
-    
-    def _tile_image(self):
-        """
-        Cut input image into square tiles with buffer and preserver geoinformation for each tile. 
-        """
-        profile = self._dataset.profile.copy()
+
+    @staticmethod
+    def _get_window(dataset: DatasetReader, tile_size, buffer_size, ):
+        profile = dataset.profile.copy()
         y = profile['height']
         x = profile['width']
-        transform = self._dataset.profile['transform']
+        transform = dataset.profile['transform']
         # Convert meter tile size to pixel tile size
-        self._tile_size_pixel_x = int(np.ceil(self.tile_size / self._dataset.res[0]))
-        self._tile_size_pixel_y = int(np.ceil(self.tile_size / self._dataset.res[1]))
-        self._buffer_size_pixel_x = int(np.ceil(self.buffer_size / self._dataset.res[0]))
-        self._buffer_size_pixel_y = int(np.ceil(self.buffer_size / self._dataset.res[1]))
+        tile_size_pixel_x = int(np.ceil(tile_size / dataset.res[0]))
+        tile_size_pixel_y = int(np.ceil(tile_size / dataset.res[1]))
+        buffer_size_pixel_x = int(np.ceil(buffer_size / dataset.res[0]))
+        buffer_size_pixel_y = int(np.ceil(buffer_size / dataset.res[1]))
         # Calculate number of tiles along height and width with buffer.
-        self._n_tiles_x = int(np.ceil((x + self._buffer_size_pixel_x) / (self._buffer_size_pixel_x + self._tile_size_pixel_x)))
-        self._n_tiles_y = int(np.ceil((y + self._buffer_size_pixel_y) / (self._buffer_size_pixel_y + self._tile_size_pixel_y)))
+        n_tiles_x = int(np.ceil((x + buffer_size_pixel_x) / (buffer_size_pixel_x + tile_size_pixel_x)))
+        n_tiles_y = int(np.ceil((y + buffer_size_pixel_y) / (buffer_size_pixel_y + tile_size_pixel_y)))
         
         # Add buffer to original raster to make sure every tiles has same size.
-        data = self._dataset.read()
+        data = dataset.read()
         data = np.where(data<0, 0, data)
         pad = ((0,0),
-                (self._buffer_size_pixel_y, self._n_tiles_y * (self._tile_size_pixel_y + self._buffer_size_pixel_y) - y),
-                (self._buffer_size_pixel_x, self._n_tiles_x * (self._tile_size_pixel_x + self._buffer_size_pixel_x) - x)
+                (buffer_size_pixel_y, n_tiles_y * (tile_size_pixel_y + buffer_size_pixel_y) - y),
+                (buffer_size_pixel_x, n_tiles_x * (tile_size_pixel_x + buffer_size_pixel_x) - x)
                 )
         padded_data = np.pad(data, pad_width=pad, mode='constant', constant_values=0)
         profile.update({
             'height': padded_data.shape[1],
             'width': padded_data.shape[2],
-            'transform': Affine(transform[0],transform[1], transform[2]- self._buffer_size_pixel_x*transform[0],
-                                transform[3],transform[4], transform[5]- self._buffer_size_pixel_x*transform[4])
+            'transform': Affine(transform[0],transform[1], transform[2]- buffer_size_pixel_x*transform[0],
+                                transform[3],transform[4], transform[5]- buffer_size_pixel_x*transform[4])
         })
 
-        # write new dataset into RAM
-        with io.BytesIO() as memfile:
-            with rio.open(memfile, 'w', **profile) as dst:
-                dst.write(padded_data)
-            memfile.seek(0)
-            self._dataset_padded = rio.open(memfile) 
-
         # Make meshgrid to create 2d (x,y) index of all tiles
-        tile_index_x, tile_index_y = np.meshgrid(np.arange(self._n_tiles_x), np.arange(self._n_tiles_y))
+        tile_index_x, tile_index_y = np.meshgrid(np.arange(n_tiles_x), np.arange(n_tiles_y))
         flat_tile_x = tile_index_x.flatten()
         flat_tile_y = tile_index_y.flatten()
-        num_tiles = len(flat_tile_x)
 
         # Make windows for all tiles.
-        self._windows = np.array([
+        windows = np.array([
             Window(
-            max(((start_x * (self._tile_size_pixel_x + (2 * self._buffer_size_pixel_x)) - start_x * self._buffer_size_pixel_x), 0)),
-            max(((start_y * (self._tile_size_pixel_y + (2 * self._buffer_size_pixel_y)) - start_y * self._buffer_size_pixel_x), 0)),
-            self._tile_size_pixel_x + 2 * self._buffer_size_pixel_x,
-            self._tile_size_pixel_y + 2 * self._buffer_size_pixel_y,
+            max(((start_x * (tile_size_pixel_x + (2 * buffer_size_pixel_x)) - start_x * buffer_size_pixel_x), 0)),
+            max(((start_y * (tile_size_pixel_y + (2 * buffer_size_pixel_y)) - start_y * buffer_size_pixel_x), 0)),
+            tile_size_pixel_x + 2 * buffer_size_pixel_x,
+            tile_size_pixel_y + 2 * buffer_size_pixel_y,
             ) 
             for start_x, start_y in zip(flat_tile_x, flat_tile_y)
             ])
-            
-        # loop stack all tiles into one (tiles, channels, rows, columns) matrix
-        tiles_list = []
-        self._profiles = []
-        self._coco_dicts = []
-        for idx, window in enumerate(self._windows):
-            tile_profile = self._dataset_padded.profile
-            tile_data = self._dataset_padded.read(window=window)
-            tile_profile.update({
-            'transform': self._dataset_padded.window_transform(window),
-            'height': window.height,
-            'width': window.width,
-        })
-            tiles_list.append(tile_data)
-            self._profiles.append(tile_profile)
-            sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
-            sys.stdout.flush()
-        print()
-        self._stack_tiles = np.stack(tiles_list, axis=0)
-        self._report = {'file name': self.fpth.name,
-                'tile size': self._tile_size_pixel_x,
-                'buffer size': self._buffer_size_pixel_x,
-                'total tiles': num_tiles,
-                'original size': str(self._dataset.shape),
-                'buffed size': str(self._dataset_padded.shape),
-                'crs': str(self._dataset_padded.crs),
-                'band': self._dataset_padded.count
-                }
+        dataset.close()
+        return padded_data, profile, windows
 
+    def resample(self, new_resolution):
+        print(f'Resampling raster to {new_resolution} m')
+        profile = self._dataset.profile.copy()
+        old_transform = profile['transform']
+        new_width= int(np.round((self._dataset.bounds.right - self._dataset.bounds.left) / new_resolution))
+        new_height = int(np.round((self._dataset.bounds.top - self._dataset.bounds.bottom) / new_resolution))
+        profile.update({
+            'height': new_height,
+            'width': new_width,
+            'transform': Affine(new_resolution, old_transform.b, old_transform.c, 
+                                old_transform.d, -new_resolution, old_transform.f)
+
+        })
+        data = self._dataset.read(
+            out_shape = (self._dataset.count, new_height, new_width),
+            resampling = Resampling.gauss
+        )
+        with MemoryFile() as memfile:
+            with memfile.open(**profile) as dst:
+                dst.write(data)
+            self._dataset = memfile.open()
+
+    def tile_image(self):
+        """
+        Cut input image into square tiles with buffer and preserver geoinformation for each tile. 
+        """
+        padded_data, profile, self._windows = Tile._get_window(self._dataset, self._tile_size, self._buffer_size)
+        with MemoryFile() as memfile:
+            with memfile.open(**profile) as dst:
+                dst.write(padded_data)
+
+            self._dataset = memfile.open()
+                   
+        # loop stack all tiles into one (tiles, channels, rows, columns) matrix
+            tiles_list = []
+            self._profiles = []
+            self._coco_dicts = []
+            num_tiles = len(self._windows)
+            for idx, window in enumerate(self._windows):
+                tile_profile = self._dataset.profile
+                tile_data = self._dataset.read(window=window)
+                tile_profile.update({
+                'transform': self._dataset.window_transform(window),
+                'height': window.height,
+                'width': window.width,
+            })
+                tiles_list.append(tile_data)
+                self._profiles.append(tile_profile)
+                sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} tile')
+                sys.stdout.flush()
+            print()
+            self._stack_tiles = np.stack(tiles_list, axis=0)
+            self._report = {'file name': self.fpth.name,
+                    'tile size': self._tile_size,
+                    'buffer size': self._buffer_size,
+                    'total tiles': num_tiles,
+                    'original size': str(rio.open(self.fpth).shape),
+                    'buffed size': str(self._dataset.shape),
+                    'crs': str(self._dataset.crs),
+                    'band': self._dataset.count
+                    }
+    
     @property
     def data(self):
         return self._stack_tiles
@@ -153,7 +179,7 @@ class Tile:
         """
         This returns the rasterio dataset for the padded original raster
         """
-        return self._dataset_padded
+        return self._dataset
     
     def to_h5(self, save_path:str):
         """
