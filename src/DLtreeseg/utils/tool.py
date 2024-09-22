@@ -10,6 +10,7 @@ from pathlib import Path
 
 from detectron2.structures import BoxMode
 import numpy as np
+from shapely import Polygon
 
 # pack list into numpy scalar data which can be storage into hdf5 dataset
 def pack_h5_list(data: list):
@@ -19,9 +20,19 @@ def pack_h5_list(data: list):
 def unpack_h5_list(data: np.void):
     return pickle.loads(data.tobytes())
 
-
+def to_pixelcoord(transform, window, polygon: Polygon) -> list :
+    """ Convert geographic coords in polygon to pixel-based coords by bound box.
+    Args:
+        window: The rasterio window with (col_off, row_off, width, height)
+        polygon: Single polygon from shaply
+    """
+    pixel_coord = [~transform*coord for coord in list(polygon.exterior.coords)]
+    pixelcoord = [(x - window.col_off,  y - window.row_off) 
+                           for x, y in pixel_coord]
+    pixelcoord_list = [point for coord in pixelcoord for point in coord]
+    return pixelcoord_list
 class COCO_format:
-    """Make COCO Json format (https://cocodataset.org/#home) for images
+    """Make COCO Json format (https://github.com/levan92/cocojson/blob/main/docs/coco.md) for images
     """
     def __init__(self, 
                  info: dict = {}):
@@ -167,7 +178,7 @@ class COCO_format:
                         segmentation:list = [],
                         keypoints :list = [],
                         num_keypoints :list = [],
-                        bbox_mode = 'xyxy'):
+                        bbox_mode = 'xywh'):
         if bbox_mode == 'xyxy':
             bbox_mode = [BoxMode.XYXY_ABS]*len(id)
         elif bbox_mode == 'xywh':
@@ -227,7 +238,6 @@ class COCO_format:
             self.COCO["categories"] = self.COCO['categories'] + categories['categories']
         else: 
             self.COCO.update(categories)
-
     
     def add_annotations(self, id:list,
                         image_id:list,
@@ -255,3 +265,5 @@ class COCO_format:
     def save_json(self, save_path:str):
         with open(save_path, 'w') as f:
             json.dump(self.COCO, f)
+
+    
