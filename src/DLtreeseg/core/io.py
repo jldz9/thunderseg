@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import geopandas as gpd
+from geopandas import GeoDataFrame
 import h5py
 import numpy as np
 import rasterio as rio
@@ -55,8 +56,7 @@ def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
 
 # save file to local gis
 def save_gis(path_to_file:str, data:np.ndarray, profile):
+    path_to_file = Path(path_to_file)
     with rio.open(path_to_file, 'w', **profile) as dst:
         dst.write(data)
-        sys.stdout.write(f'\rExport {path_to_file.name}')
-        sys.stdout.flush()
 
