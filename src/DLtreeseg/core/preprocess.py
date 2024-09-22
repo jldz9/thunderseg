@@ -153,9 +153,7 @@ class Tile:
         self._dataset = memfile.open()
 
     def tile_image(self):
-        """
-        Cut input image into square tiles with buffer and preserver geoinformation for each tile. 
-        """         
+        """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
         self._get_window()
         tiles_list = []
         self._profiles = []
@@ -191,7 +189,6 @@ class Tile:
                 'band': self._dataset.count
                 }
         
-    
     def tile_shape(self, shp_path: str):
         """Use raster window defined by _get_window to tile input shapefiles.
         Args:
@@ -230,9 +227,6 @@ class Tile:
                     self._annotations['iscrowd'].append(0)
                     self._annotations['segmentation'].append(pixel_coord)
 
-            
-            
-
     @property
     def data(self):
         return self._stack_tiles
@@ -268,16 +262,5 @@ class Tile:
                 )
         return print()
     
-    def to_gis(self, path_to_dir:str):
-        """
-        Save individual tiles into raster
-        """
-        path_to_dir = Path(path_to_dir)
-        path_to_dir.mkdir(parents=True, exist_ok=True)
-        tiles = [self._stack_tiles[i] for i in range(self._stack_tiles.shape[0])]
-        for data, window, profile in zip(tiles, self._windows, self._profiles):
-            tile_path = Path(f'{path_to_dir}/{self.fpth.stem}_{window.row_off}_{window.col_off}{self.fpth.suffix}')
-            save_gis(tile_path, data, profile)
-        return print()
 
     
