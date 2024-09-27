@@ -18,7 +18,24 @@ from detectron2.config import get_cfg
 from detectron2 import model_zoo
 from detectron2.engine import DefaultPredictor
 
-# save hdf5 to local drive
+def create_project_structure(workdir: str):
+    """
+    Create the necessary file structure for detectron2.
+    """
+    workdir = Path(workdir)
+    directories = [
+        workdir / "datasets",
+        workdir / "datasets" / "annotations",
+        workdir / "datasets" / "train",
+        workdir / "datasets" / "val",
+        workdir / "output",
+        workdir / "configs"
+    ]
+    
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        print(f"Created directory at {directory}")
+
 def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
     """
     Use of h5py to storage data to local disk. **kwarg should contains packed binary data from
@@ -54,7 +71,6 @@ def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
                 grp.create_dataset(key, data=value)
     print(f'{save_path} saved!')
 
-# save file to local gis
 def save_gis(path_to_file:str, data:np.ndarray, profile):
     path_to_file = Path(path_to_file)
     with rio.open(path_to_file, 'w', **profile) as dst:
