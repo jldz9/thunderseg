@@ -8,7 +8,8 @@ import io
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+
 
 import geopandas as gpd
 import numpy as np
@@ -19,7 +20,7 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord
+from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_format
 from DLtreeseg.core import save_h5, save_gis
 
 
@@ -44,7 +45,6 @@ class Tile:
             debug: Switch to turn on debug
         """
         self.fpth = Path(fpth).absolute()
-        
         self._output_path = Path(output_path).absolute()
         self._output_path.mkdir(exist_ok=True)
         self._tile_size = tile_size
@@ -175,8 +175,8 @@ class Tile:
             self._images['file_name'].append(filename)
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
-            self._images['date_captured'].append(datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))
-            save_gis(filename, tile_data, tile_profile)
+            self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            #save_gis(filename, tile_data, tile_profile)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         self._report = {'file name': self.fpth.name,
@@ -196,11 +196,11 @@ class Tile:
         """
         if not hasattr(self, "_windows"):
             self._get_window()
-        nw_conor_coor = (self._dataset.bounds.left, self._dataset.bounds.top)
         self._shp_path = Path(shp_path)
         self._shpdataset = gpd.read_file(self._shp_path)
+        self._shpdataset = self._shpdataset.fillna(0).astype({'category':int, 'iscrowd':int})
         if self._shpdataset.crs.to_epsg()!= self._dataset.crs.to_epsg():
-            self._shpdataset.to_crs(epsg=self._dataset.crs.to_epsg())
+            self._shpdataset = self._shpdataset.to_crs(epsg=self._dataset.crs.to_epsg())
         annotation_id = 1
         for idx, window in enumerate(self._windows):
             sys.stdout.write(f'\rClipping shapfile for: {idx+1}/{len(self._windows)} tile')
@@ -209,11 +209,10 @@ class Tile:
             bbox = box(*geobounds)
             window_gdf = gpd.GeoDataFrame(geometry=[bbox], crs=self._dataset.crs.to_epsg())
             intersection = gpd.overlay(self._shpdataset, window_gdf, how='intersection')
-            segmentations = intersection.geometry.tolist()
-            if len(segmentations) > 0:
-                for seg in segmentations:
-                    pixel_coord = to_pixelcoord(self._dataset.transform, window, seg)
-                    area = seg.area/(self._dataset.res[0]*self._dataset.res[1])
+            if len(intersection) > 0:
+                for _, row in intersection.iterrows():
+                    pixel_coord = to_pixelcoord(self._dataset.transform, window, row.geometry)
+                    area = row.geometry.area/(self._dataset.res[0]*self._dataset.res[1])
                     bbox = [min(pixel_coord[0::2]), 
                             min(pixel_coord[1::2]), 
                             max(pixel_coord[0::2]) - min(pixel_coord[0::2]),
@@ -221,12 +220,42 @@ class Tile:
                     self._annotations['id'].append(annotation_id)
                     annotation_id += 1
                     self._annotations['image_id'].append(idx+1)
-                    self._annotations['category_id'].append(1)
+                    self._annotations['category_id'].append(row.category)
                     self._annotations['bbox'].append(bbox)
                     self._annotations['area'].append(area)
-                    self._annotations['iscrowd'].append(0)
+                    self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
 
+    def save_coco(self, info:dict = {'description':'', 'url':'', 'version':'', 'year':'', 'contributor':''},
+                output_path:str = ''):
+        """Convert input images and annotations to COCO format.
+        Args:
+            info: Information of dataset for COCO json file, default is empty dict
+            output_path: Output path to save COCO json file, default is annotation folder under current directory
+        """
+        if output_path == '':
+            output_path = self._output_path / 'annotations'/ f'{self.fpth.stem}.json'
+            output_path.parent.mkdir(exist_ok=True)
+        info["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        coco = COCO_format(info)
+        coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
+        coco.add_licenses([1],[''],[''])
+        coco.add_images(id = self._images['id'], 
+                        file_name = self._images['file_name'],
+                        width = self._images['width'],
+                        height = self._images['height'],
+                        date_captured = self._images['date_captured']
+                        )
+        coco.add_annotations(id = self._annotations['id'],
+                             image_id = self._annotations['image_id'],
+                             category_id = self._annotations['category_id'],
+                             bbox = self._annotations['bbox'],
+                             area = self._annotations['area'],
+                             iscrowd = self._annotations['iscrowd'],
+                             segmentation = self._annotations['segmentation']
+                             )
+        coco.save_json(output_path)
+    
     @property
     def data(self):
         return self._stack_tiles
@@ -260,7 +289,7 @@ class Tile:
                 windows = pack_h5_list(self._windows),
                 profiles = pack_h5_list(self._profiles)
                 )
-        return print()
+        
     
 
     
