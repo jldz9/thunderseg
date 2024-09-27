@@ -7,6 +7,7 @@ Tools use by DLtreeseg
 import json
 import pickle
 from pathlib import Path
+from types import SimpleNamespace
 
 from detectron2.structures import BoxMode
 import numpy as np
@@ -31,6 +32,7 @@ def to_pixelcoord(transform, window, polygon: Polygon) -> list :
                            for x, y in pixel_coord]
     pixelcoord_list = [point for coord in pixelcoord for point in coord]
     return pixelcoord_list
+
 class COCO_format:
     """Make COCO Json format (https://github.com/levan92/cocojson/blob/main/docs/coco.md) for images
     """
@@ -137,7 +139,7 @@ class COCO_format:
         if len(empty_named_vars) > 0:
             for key, _ in empty_named_vars.items():
                 if key == 'license':
-                    new_list = [0] * len(id)
+                    new_list = [1] * len(id)
                 elif key == 'date_captured':
                     new_list = ["1949-10-01T07:43:32Z"] * len(id)  
                 else:
@@ -258,9 +260,9 @@ class COCO_format:
             self.COCO['annotations'] = self.COCO['annotations'] + annotations['annotations']
         else:
             self.COCO.update(annotations)
-    
+    @property
     def data(self):
-        return self.COCO
+        return SimpleNamespace(**self.COCO)
     
     def save_json(self, save_path:str):
         with open(save_path, 'w') as f:
