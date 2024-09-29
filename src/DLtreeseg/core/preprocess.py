@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 import geopandas as gpd
 import numpy as np
 import rasterio as rio
+from detectron2.data.datasets import register_coco_instances
+from detectron2.data import MetadataCatalog, DatasetCatalog
 from rasterio.io import DatasetReader, MemoryFile
 from rasterio.windows import Window
 from rasterio.transform import Affine
@@ -176,7 +178,7 @@ class Tile:
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            #save_gis(filename, tile_data, tile_profile)
+            save_gis(filename, tile_data, tile_profile)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         self._report = {'file name': self.fpth.name,
@@ -199,7 +201,7 @@ class Tile:
         self._shp_path = Path(shp_path)
         self._shpdataset = gpd.read_file(self._shp_path)
         self._shpdataset = self._shpdataset.fillna(0).astype({'category':int, 'iscrowd':int})
-        if self._shpdataset.crs.to_epsg()!= self._dataset.crs.to_epsg():
+        if self._shpdataset.crs.to_epsg() != self._dataset.crs.to_epsg():
             self._shpdataset = self._shpdataset.to_crs(epsg=self._dataset.crs.to_epsg())
         annotation_id = 1
         for idx, window in enumerate(self._windows):
@@ -226,27 +228,25 @@ class Tile:
                     self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
 
-    def save_coco(self, info:dict = {'description':'', 'url':'', 'version':'', 'year':'', 'contributor':''},
-                output_path:str = ''):
+    def parse_COCO(self, cocopath:str, name:str, **kwargs):
         """Convert input images and annotations to COCO format.
         Args:
-            info: Information of dataset for COCO json file, default is empty dict
+            info: Information of dataset for COCO json file, default is an empty dict
             output_path: Output path to save COCO json file, default is annotation folder under current directory
+            kwargs: Other meta data information for COCO json file "Info" section, could include "description", "url", "version", "year", "contributor"
         """
-        if output_path == '':
-            output_path = self._output_path / 'annotations'/ f'{self.fpth.stem}.json'
-            output_path.parent.mkdir(exist_ok=True)
-        info["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        coco = COCO_format(info)
-        coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
-        coco.add_licenses([1],[''],[''])
-        coco.add_images(id = self._images['id'], 
+        
+        kwargs["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        self._coco = COCO_format(kwargs)
+        self._coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
+        self._coco.add_licenses(license_id=[1],license_url=[''],license_name=[''])
+        self._coco.add_images(id = self._images['id'], 
                         file_name = self._images['file_name'],
                         width = self._images['width'],
                         height = self._images['height'],
                         date_captured = self._images['date_captured']
                         )
-        coco.add_annotations(id = self._annotations['id'],
+        self._coco.add_annotations(id = self._annotations['id'],
                              image_id = self._annotations['image_id'],
                              category_id = self._annotations['category_id'],
                              bbox = self._annotations['bbox'],
@@ -254,7 +254,8 @@ class Tile:
                              iscrowd = self._annotations['iscrowd'],
                              segmentation = self._annotations['segmentation']
                              )
-        coco.save_json(output_path)
+        self._coco.save_json(cocopath)
+        register_coco_instances(name,{}, cocopath, self._output_path)
     
     @property
     def data(self):
