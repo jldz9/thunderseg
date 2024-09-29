@@ -1,4 +1,6 @@
 
+import os
+os.environ['PROJ_LIB'] = '/home/jldz9/miniconda3/envs/DL/share/proj'
 import sys
 sys.path.append('/home/jldz9/DL/DL_packages/DLtreeseg/src')
 from pathlib import Path
@@ -15,5 +17,5 @@ output_path = Path('/home/jldz9/DL/output')
 a = Tile(fpth=fpath, output_path=output_path, buffer_size=20, tile_size=100)
 a.tile_image()
 a.tile_shape(shp_path)
-a.to_coco_json()
+a.parse_COCO('/home/jldz9/DL/output/shurbcoco.json', 'shurbcoco')
 print()
