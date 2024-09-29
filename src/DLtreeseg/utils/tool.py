@@ -201,7 +201,7 @@ class COCO_format:
             named_vars.update(empty_named_vars)
         annotations_list = []
         for id, ii, ci, bb,  a, ic, se, kp, nk, bbm in zip(*list(named_vars.values())):
-            tempdict = COCO_format.template(annotations_update=[id, ii, ci, bb, a, ic, se, kp, nk, bbm])
+            tempdict = COCO_format.template(annotations_update=[id, ii, ci, bb, a, ic, [se], kp, nk, bbm])
             annotations_list.append(tempdict)
         return {"annotations": annotations_list}
         
@@ -265,7 +265,7 @@ class COCO_format:
         return SimpleNamespace(**self.COCO)
     
     def save_json(self, save_path:str):
-        with open(save_path, 'w') as f:
+        with open(Path(save_path).absolute(), 'w') as f:
             json.dump(self.COCO, f)
 
     
