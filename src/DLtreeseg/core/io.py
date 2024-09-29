@@ -7,6 +7,7 @@ IO related module for DLtreeseg
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import geopandas as gpd
 from geopandas import GeoDataFrame
@@ -23,18 +24,17 @@ def create_project_structure(workdir: str):
     Create the necessary file structure for detectron2.
     """
     workdir = Path(workdir)
-    directories = [
-        workdir / "datasets",
-        workdir / "datasets" / "annotations",
-        workdir / "datasets" / "train",
-        workdir / "datasets" / "val",
-        workdir / "output",
-        workdir / "configs"
-    ]
+    directories = dict(
+    annotations=  workdir / "datasets" / "annotations",
+            train =  workdir / "datasets" / "train",
+    val =   workdir / "datasets" / "val",
+    test =  workdir / "datasets" / "test",
+    result = workdir / "results")
     
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
         print(f"Created directory at {directory}")
+    return SimpleNamespace(**directories)
 
 def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
     """
