@@ -22,7 +22,7 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_format
+from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser
 from DLtreeseg.core import save_h5, save_gis
 
 
@@ -228,7 +228,7 @@ class Tile:
                     self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
 
-    def parse_COCO(self, cocopath:str, name:str, **kwargs):
+    def to_COCO(self, cocopath:str, name:str, **kwargs):
         """Convert input images and annotations to COCO format.
         Args:
             info: Information of dataset for COCO json file, default is an empty dict
@@ -237,7 +237,7 @@ class Tile:
         """
         
         kwargs["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        self._coco = COCO_format(kwargs)
+        self._coco = COCO_parser(kwargs)
         self._coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
         self._coco.add_licenses(license_id=[1],license_url=[''],license_name=[''])
         self._coco.add_images(id = self._images['id'], 
