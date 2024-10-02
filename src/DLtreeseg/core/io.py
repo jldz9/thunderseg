@@ -29,11 +29,11 @@ def create_project_structure(workdir: str):
             train =  workdir / "datasets" / "train",
     val =   workdir / "datasets" / "val",
     test =  workdir / "datasets" / "test",
-    result = workdir / "results")
-    
-    for directory in directories:
+    result = workdir / "results"
+    )
+    for key, directory in directories.items():
         directory.mkdir(parents=True, exist_ok=True)
-        print(f"Created directory at {directory}")
+        print(f"Created {key} at {directory}")
     return SimpleNamespace(**directories)
 
 def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
