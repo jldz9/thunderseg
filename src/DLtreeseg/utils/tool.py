@@ -6,8 +6,10 @@ Tools use by DLtreeseg
 """
 import json
 import pickle
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+
 
 from detectron2.structures import BoxMode
 import numpy as np
@@ -33,7 +35,13 @@ def to_pixelcoord(transform, window, polygon: Polygon) -> list :
     pixelcoord_list = [point for coord in pixelcoord for point in coord]
     return pixelcoord_list
 
-class COCO_format:
+def read_toml(config_path) -> dict:
+    with open(config_path, 'rb') as f:
+        tmp = tomllib.load(f)
+    toml = SimpleNamespace_ext(**tmp)
+    return toml
+
+class COCO_parser:
     """Make COCO Json format (https://github.com/levan92/cocojson/blob/main/docs/coco.md) for images
     """
     def __init__(self, 
@@ -268,4 +276,30 @@ class COCO_format:
         with open(Path(save_path).absolute(), 'w') as f:
             json.dump(self.COCO, f)
 
+class SimpleNamespace_ext(SimpleNamespace):
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                kwargs[key] = self._nested_dict(value)
+        super().__init__(**kwargs)
+
+    def _nested_dict(self, d:dict):
+        if not isinstance(d, dict):
+            return d
+        ns = SimpleNamespace()
+        for key, value in d.items():
+            # If the value is a dictionary, convert it recursively
+            if isinstance(value, dict):
+                setattr(ns, key, self._nested_dict(value))
+            else:
+                setattr(ns, key, value)  # Otherwise, just set the attribute
+        return ns
     
+    def append(self, other:SimpleNamespace):
+        if isinstance(other, SimpleNamespace):
+            self.__dict__.update(other.__dict__)
+        else: 
+            raise TypeError('Only able to append SimpleNamespace')
+    
+   
+   
