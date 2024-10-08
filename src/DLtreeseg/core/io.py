@@ -9,15 +9,14 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import geopandas as gpd
 from geopandas import GeoDataFrame
 import h5py
 import numpy as np
 import rasterio as rio
 import torch
-from detectron2.config import get_cfg
-from detectron2 import model_zoo
-from detectron2.engine import DefaultPredictor
+
 
 def create_project_structure(workdir: str):
     """
@@ -25,18 +24,20 @@ def create_project_structure(workdir: str):
     """
     workdir = Path(workdir)
     directories = dict(
-    annotations=  workdir / "datasets" / "annotations",
-            train =  workdir / "datasets" / "train",
-    val =   workdir / "datasets" / "val",
-    test =  workdir / "datasets" / "test",
-    result = workdir / "results"
+            annotations = workdir / "datasets" / "annotations",
+            train = workdir / "datasets" / "train",
+            train_shp = workdir / "datasets" / "train" / "shp",
+            val = workdir / "datasets" / "val",
+            val_shp = workdir / "datasets" / "val" / "shp",
+            test = workdir / "datasets" / "test",
+            result = workdir / "results"
     )
     for key, directory in directories.items():
         directory.mkdir(parents=True, exist_ok=True)
         print(f"Created {key} at {directory}")
     return SimpleNamespace(**directories)
 
-def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
+def save_h5(save_path:str, data:np.ndarray = [], attrs:dict = None, **kwarg):
     """
     Use of h5py to storage data to local disk. **kwarg should contains packed binary data from
     function pack_h5_list.
@@ -71,8 +72,24 @@ def save_h5(save_path:str, data:np.ndarray, attrs:dict = None, **kwarg):
                 grp.create_dataset(key, data=value)
     print(f'{save_path} saved!')
 
-def save_gis(path_to_file:str, data:np.ndarray, profile):
+def to_file(path_to_file:str, data:np.ndarray, profile=None, suffix:str='tif'):
     path_to_file = Path(path_to_file)
-    with rio.open(path_to_file, 'w', **profile) as dst:
-        dst.write(data)
+    profile['driver'] = suffix
+    if suffix.lower() == 'png' or suffix.lower() == 'jpg':
+        band1 = data[0] # B
+        band2 = data[1] # G
+        band3 = data[2] # R
+        stack = np.stack([band1, band2, band3], axis=-1)
+        min_val = np.min(stack)  # Minimum value in the array
+        max_val = np.max(stack)
+        if max_val == min_val:
+            normalized_array = np.zeros_like(stack, dtype=np.float32)  # or np.ones_like(array, dtype=np.float32)
+        else:
+            normalized_array = (stack - min_val) / (max_val - min_val) * 255
+        
+        array_bgr = cv2.cvtColor(normalized_array, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(path_to_file.with_suffix(f'.{suffix.lower()}'), array_bgr)
+    if suffix == 'tif':
+        with rio.open(path_to_file, 'w', **profile) as dst:
+            dst.write(data)
 
