@@ -9,11 +9,12 @@ import pickle
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
-
+from typing import List, Dict, Any, Optional
 
 from detectron2.structures import BoxMode
 import numpy as np
-from shapely import Polygon
+from rasterio.windows import Window
+from shapely import Polygon, unary_union
 
 # pack list into numpy scalar data which can be storage into hdf5 dataset
 def pack_h5_list(data: list):
@@ -23,25 +24,72 @@ def pack_h5_list(data: list):
 def unpack_h5_list(data: np.void):
     return pickle.loads(data.tobytes())
 
+def window_to_dict(window: Window) -> dict:
+    """Convert rasterio Window into dict, in order to save to COCO 
+    Args:
+        window: The single rasterio Window data
+    """
+    window_dict  = {
+        "col_off": int(window.col_off),
+        "row_off": int(window.row_off),
+        "width": int(window.width),
+        "height": int(window.height)
+    }
+    return window_dict
+
+def windowdict_to_window(window_dict:dict)-> Window:
+    return Window(window_dict['col_off'], window_dict['row_off'],window_dict['width'],window_dict['height'])
+
 def to_pixelcoord(transform, window, polygon: Polygon) -> list :
-    """ Convert geographic coords in polygon to pixel-based coords by bound box.
+    """ Convert geographic coords in polygon to local pixel-based coords by bound box.
     Args:
         window: The rasterio window with (col_off, row_off, width, height)
         polygon: Single polygon from shaply
     """
-    pixel_coord = [~transform*coord for coord in list(polygon.exterior.coords)]
+    # apply ~transform, you are computing the inverse of an affine transformation matrix, which 
+    # reverse the mapping from spatial coordinates to pixel coordinates.
+    
+    polylist = []
+    if polygon.geom_type == 'MultiPolygon': 
+        for p in polygon.geoms:
+            polylist.append(p)
+    elif polygon.geom_type == 'Polygon':
+        polylist.append(polygon)
+    polygon = polylist[0]
+    if polygon.has_z:
+        coord_list = [(x, y) for x, y, _ in polygon.exterior.coords]
+    else:
+        coord_list = [(x, y) for x, y in polygon.exterior.coords]
+    pixel_coord = [~transform*coord for coord in coord_list]
     pixelcoord = [(x - window.col_off,  y - window.row_off) 
                            for x, y in pixel_coord]
     pixelcoord_list = [point for coord in pixelcoord for point in coord]
     return pixelcoord_list
 
 def read_toml(config_path) -> dict:
+    """Read toml config file used by DLtreeseg"""
     with open(config_path, 'rb') as f:
         tmp = tomllib.load(f)
     toml = SimpleNamespace_ext(**tmp)
     return toml
 
-class COCO_parser:
+def get_mean_std(data: np.ndarray):
+        """Calculate mean and std for input raster data.
+        Args:
+            data: should be stack of data (images, band, height, width)
+        Returns:
+            mean: Mean value of input data
+            std: Standard deviation of input data
+        """
+        mean = np.mean(data, axis=(0,2,3))
+        std = np.std(data, axis=(0,2,3))
+        return mean, std
+def read_json(json_path: str):
+        with open(json_path, 'r') as f:
+            COCO = json.load(f)
+        return COCO
+class COCO_parser_backup:
+
     """Make COCO Json format (https://github.com/levan92/cocojson/blob/main/docs/coco.md) for images
     """
     def __init__(self, 
@@ -65,7 +113,7 @@ class COCO_parser:
         elif len(licenses_update) != 0: 
             raise ValueError(f'licenses section has 3 catagories, the input has {len(licenses_update)}')
 
-        if len(images_update) == 8:
+        if len(images_update) == 9:
             images = {"id": int(images_update[0]), # Image ID, Required
                       "file_name": str(images_update[1]), #Required. Better to be the full path to the image
                       "width": int(images_update[2]), # Required
@@ -73,11 +121,12 @@ class COCO_parser:
                       "license": int(images_update[4]), # Optional
                       "flickr_url": str(images_update[5]), # Optional                    
                       "coco_url": str(images_update[6]), # Optional
-                      "date_captured": str(images_update[7]), # Optional         
+                      "date_captured": str(images_update[7]), # Optional     
+                      "window": images_update[8]    # rasterio window, convert by window_to_dict
             }
             return images
         elif len(images_update) != 0: 
-            raise ValueError(f'Images section has 7 catagories, the input has {len(images_update)}')
+            raise ValueError(f'Images section has 9 catagories, the input has {len(images_update)}')
         
         if len(categories_update) == 3:
             categories = {
@@ -126,7 +175,7 @@ class COCO_parser:
         named_vars.update(empty_named_vars)
         license_list = []
         for  id, name, url in zip(*list(named_vars.values())):
-            tempdict = COCO_format.template(licenses_update=[id, name, url])
+            tempdict = COCO_parser.template(licenses_update=[id, name, url])
             license_list.append(tempdict)
         return {'licenses':license_list}
 
@@ -138,7 +187,8 @@ class COCO_parser:
                    license: list= [],
                    flickr_url: list = [], 
                    coco_url: list = [],
-                   date_captured: list= [],                   
+                   date_captured: list= [], 
+                   window: list = []                  
                    ):
         if len(id) != len(file_name) or len(id) != len(width) or len(id) != len(height):
             raise AssertionError (f'Length of id, fil_name, width, and height should be the same')
@@ -150,13 +200,15 @@ class COCO_parser:
                     new_list = [1] * len(id)
                 elif key == 'date_captured':
                     new_list = ["1949-10-01T07:43:32Z"] * len(id)  
+                elif key == 'window':
+                    new_list = [{}]*len(id)
                 else:
                     new_list = [''] * len(id)
                 empty_named_vars[key] = new_list
         named_vars.update(empty_named_vars)
         image_list = []
-        for i, fn, w, h, lic, fl, cocol, dc in zip(*list(named_vars.values())):
-            tempdict = COCO_format.template(images_update=[i, fn, w, h, lic, fl, cocol, dc])
+        for i, fn, w, h, lic, fl, cocol, dc, w in zip(*list(named_vars.values())):
+            tempdict = COCO_parser.template(images_update=[i, fn, w, h, lic, fl, cocol, dc, w])
             image_list.append(tempdict)
         return {"images":image_list}
     
@@ -174,7 +226,7 @@ class COCO_parser:
             named_vars.update(empty_named_vars)
         categories_list = []
         for i, n, s in zip(*list(named_vars.values())):
-            tempdict = COCO_format.template(categories_update=[i ,n, s])
+            tempdict = COCO_parser.template(categories_update=[i ,n, s])
             categories_list.append(tempdict)
         return {"categories": categories_list}
     
@@ -209,7 +261,7 @@ class COCO_parser:
             named_vars.update(empty_named_vars)
         annotations_list = []
         for id, ii, ci, bb,  a, ic, se, kp, nk, bbm in zip(*list(named_vars.values())):
-            tempdict = COCO_format.template(annotations_update=[id, ii, ci, bb, a, ic, [se], kp, nk, bbm])
+            tempdict = COCO_parser.template(annotations_update=[id, ii, ci, bb, a, ic, [se], kp, nk, bbm])
             annotations_list.append(tempdict)
         return {"annotations": annotations_list}
         
@@ -230,11 +282,12 @@ class COCO_parser:
                    license: list= [],
                    flickr_url: list = [], 
                    coco_url: list = [],
-                   date_captured: list= [],                   
+                   date_captured: list= [],
+                   window: list = []                   
                    ):
         images = self._add_images(id, file_name,  width, height,license, 
                                                   coco_url,  
-                                                  date_captured, flickr_url)
+                                                  date_captured, flickr_url, window)
         if "images" in self.COCO: 
             self.COCO['images'] = self.COCO['images'] + images['images']
         else: 
@@ -276,6 +329,141 @@ class COCO_parser:
         with open(Path(save_path).absolute(), 'w') as f:
             json.dump(self.COCO, f)
 
+class COCO_parser:
+    """COCO JSON format parser for images.
+
+    Attributes:
+        info (dict): Metadata about the dataset.
+        COCO (dict): Structure to hold the COCO formatted data.
+    """
+    def __init__(self, info: dict = None):
+        self.info = info or {}
+        self.COCO = {"info": self.info}
+
+    @staticmethod
+    def template(licenses_update: Optional[List[Any]] = None,
+                 images_update: Optional[List[Any]] = None,
+                 categories_update: Optional[List[Any]] = None,
+                 annotations_update: Optional[List[Any]] = None) -> Dict[str, Any]:
+        """Creates a COCO template for licenses, images, categories, and annotations."""
+        licenses_update = licenses_update or []
+        images_update = images_update or []
+        categories_update = categories_update or []
+        annotations_update = annotations_update or []
+
+        if licenses_update and len(licenses_update) != 3:
+            raise ValueError(f'licenses section must have 3 categories, received {len(licenses_update)}.')
+
+        if images_update and len(images_update) != 9:
+            raise ValueError(f'Images section must have 9 categories, received {len(images_update)}.')
+
+        if categories_update and len(categories_update) != 3:
+            raise ValueError(f'Categories section must have 3 categories, received {len(categories_update)}.')
+
+        if annotations_update and len(annotations_update) != 10:
+            raise ValueError(f'Annotations section must have 10 categories, received {len(annotations_update)}.')
+
+        licenses = {"id": int(licenses_update[0]), "name": str(licenses_update[1]), "url": str(licenses_update[2])} if licenses_update else {}
+        images = {
+            "id": int(images_update[0]),
+            "file_name": str(images_update[1]),
+            "width": int(images_update[2]),
+            "height": int(images_update[3]),
+            "license": int(images_update[4]),
+            "flickr_url": str(images_update[5]),
+            "coco_url": str(images_update[6]),
+            "date_captured": str(images_update[7]),
+            "window": images_update[8]
+        } if images_update else {}
+        categories = {
+            "id": int(categories_update[0]),
+            "name": str(categories_update[1]),
+            "supercategory": str(categories_update[2]),
+        } if categories_update else {}
+        annotations = {
+            "id": int(annotations_update[0]),
+            "image_id": int(annotations_update[1]),
+            "category_id": int(annotations_update[2]),
+            "bbox": list(annotations_update[3]),
+            "area": int(annotations_update[4]),
+            "iscrowd": int(annotations_update[5]),
+            "segmentation": list(annotations_update[6]),
+            "keypoints": list(annotations_update[7]),
+            "num_keypoints": int(annotations_update[8]),
+            "bbox_mode": annotations_update[9],
+        } if annotations_update else {}
+
+        return {"licenses": licenses, "images": images, "categories": categories, "annotations": annotations}
+
+    @staticmethod
+    def _add_section(section_name: str, *args: List[List[Any]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Generates a section of the COCO JSON."""
+        section_list = []
+        for values in zip(*args):
+            section_data = COCO_parser.template(**{section_name: list(values)})
+            section_list.append(section_data)
+        return section_list
+
+    def add_licenses(self, license_id: List[int], license_url: List[str] = None, license_name: List[str] = None):
+        """Add licenses to the COCO structure."""
+        license_url = license_url or [''] * len(license_id)
+        license_name = license_name or [''] * len(license_id)
+        licenses = self._add_section('licenses_update', license_id, license_url, license_name)
+
+        self.COCO.setdefault('licenses', []).extend([d[key] for d in licenses for key in d if key == 'licenses'])
+
+    def add_images(self, id: List[int], file_name: List[str], width: List[int], height: List[int],
+                   license: List[int] = None, flickr_url: List[str] = None, coco_url: List[str] = None,
+                   date_captured: List[str] = None, window: List[dict] = None):
+        """Add images to the COCO structure."""
+        license = license or [1] * len(id)
+        flickr_url = flickr_url or [''] * len(id)
+        coco_url = coco_url or [''] * len(id)
+        date_captured = date_captured or ["1949-10-01T07:43:32Z"] * len(id)
+        window = window or [{}] * len(id)
+
+        images = self._add_section('images_update', id, file_name, width, height, license, flickr_url, coco_url, date_captured, window)
+
+        self.COCO.setdefault('images', []).extend([d[key] for d in images for key in d if key == 'images'])
+
+    def add_categories(self, id: List[int], name: List[str] = None, supercategory: List[str] = None):
+        """Add categories to the COCO structure."""
+        name = name or [''] * len(id)
+        supercategory = supercategory or [''] * len(id)
+
+        categories = self._add_section('categories_update', id, name, supercategory)
+
+        self.COCO.setdefault('categories', []).extend([d[key] for d in categories for key in d if key == 'categories'])
+
+    def add_annotations(self, id: List[int], image_id: List[int], category_id: List[int],
+                        bbox: List[List[float]], area: List[int], iscrowd: List[int],
+                        segmentation: List[List[float]] = None, keypoints: List[List[float]] = None,
+                        num_keypoints: List[int] = None, bbox_mode: str = 'xywh'):
+        """Add annotations to the COCO structure."""
+        segmentation = segmentation or [[]] * len(id)
+        keypoints = keypoints or [[]] * len(id)
+        num_keypoints = num_keypoints or [0] * len(id)
+
+        annotations = self._add_section('annotations_update', id, image_id, category_id, bbox, area, iscrowd, segmentation, keypoints, num_keypoints, [bbox_mode] * len(id))
+
+        self.COCO.setdefault('annotations', []).extend([d[key] for d in annotations for key in d if key == 'annotations'])
+        for annotation in self.COCO['annotations']:
+            annotation['segmentation'] = [annotation['segmentation']]
+
+    @property
+    def data(self) -> SimpleNamespace:
+        """Return the COCO data as a SimpleNamespace."""
+        return SimpleNamespace(**self.COCO)
+
+    def save_json(self, save_path: str):
+        """Save the COCO format data to a JSON file.
+
+        Args:
+            save_path (str): The path to save the JSON file.
+        """
+        with open(save_path, 'w') as f:
+            json.dump(self.COCO, f, indent=4)
+
 class SimpleNamespace_ext(SimpleNamespace):
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
@@ -301,5 +489,3 @@ class SimpleNamespace_ext(SimpleNamespace):
         else: 
             raise TypeError('Only able to append SimpleNamespace')
     
-   
-   
