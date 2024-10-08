@@ -22,8 +22,8 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser
-from DLtreeseg.core import save_h5, save_gis
+from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std
+from DLtreeseg.core import save_h5, to_file
 
 
 class Tile: 
@@ -111,7 +111,7 @@ class Tile:
         flat_tile_y = tile_index_y.flatten()
 
         # Make windows for all tiles.
-        self._windows = np.array([
+        self._windows = [
             Window(
             max(((start_x * (tile_size_pixel_x + (2 * buffer_size_pixel_x)) - start_x * buffer_size_pixel_x), 0)),
             max(((start_y * (tile_size_pixel_y + (2 * buffer_size_pixel_y)) - start_y * buffer_size_pixel_x), 0)),
@@ -119,7 +119,7 @@ class Tile:
             tile_size_pixel_y + 2 * buffer_size_pixel_y,
             ) 
             for start_x, start_y in zip(flat_tile_x, flat_tile_y)
-            ])
+            ]
         oridataset.close()
         memfile = MemoryFile()
         with memfile.open(**profile) as dst:
@@ -154,8 +154,12 @@ class Tile:
             dst.write(data)
         self._dataset = memfile.open()
 
-    def tile_image(self):
+    def tile_image(self, mode='rgb'):
         """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
+        if mode == 'rgb':
+            suffix = 'png'
+        elif mode == 'tig':
+            suffix = 'tif'
         self._get_window()
         tiles_list = []
         self._profiles = []
@@ -173,23 +177,38 @@ class Tile:
             sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} image tile')
             sys.stdout.flush()
             self._images['id'].append(idx+1)
-            filename = f'{self._output_path}/{self.fpth.stem}_{window.row_off}_{window.col_off}{self.fpth.suffix}'
+            filename = f'{self._output_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.{suffix}'
             self._images['file_name'].append(filename)
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            save_gis(filename, tile_data, tile_profile)
+            #to_file(filename, tile_data, tile_profile, suffix=suffix)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
-        self._report = {'file name': self.fpth.name,
-                'tile size': self._tile_size,
-                'buffer size': self._buffer_size,
-                'total tiles': num_tiles,
-                'original size': str(rio.open(self.fpth).shape),
-                'buffed size': str(self._dataset.shape),
-                'crs': str(self._dataset.crs),
-                'band': self._dataset.count
-                }
+        mean, std = get_mean_std(self._stack_tiles)
+        self._report = {'file_name': self.fpth.as_posix(),
+                        'output_path': self._output_path.as_posix(),
+                        'tile_size': self._tile_size,
+                        'buffer_size': self._buffer_size,
+                        'tile_numbers': num_tiles,
+                        'original_size': str(rio.open(self.fpth).shape),
+                        'buffed_size': str(self._dataset.shape),
+                        'crs': str(self._dataset.crs.to_epsg()),
+                        'band': self._dataset.count,
+                        'affine': (self._dataset.transform.a, 
+                                self._dataset.transform.b,
+                                self._dataset.transform.c,
+                                self._dataset.transform.d,
+                                self._dataset.transform.e,
+                                self._dataset.transform.f),
+                        'driver': self._dataset.profile['driver'],
+                        'dtype': self._dataset.profile['dtype'],
+                        'nodata':self._dataset.profile['nodata'],
+                        'pixel_mean' : [float(i) for i in mean],
+                        'pixel_std' : [float(i) for i in std],
+                        'band_order': 'BGREN'
+                        }
+        print()
         
     def tile_shape(self, shp_path: str):
         """Use raster window defined by _get_window to tile input shapefiles.
@@ -211,6 +230,7 @@ class Tile:
             bbox = box(*geobounds)
             window_gdf = gpd.GeoDataFrame(geometry=[bbox], crs=self._dataset.crs.to_epsg())
             intersection = gpd.overlay(self._shpdataset, window_gdf, how='intersection')
+            print(f'{idx}:{len(intersection)}')
             if len(intersection) > 0:
                 for _, row in intersection.iterrows():
                     pixel_coord = to_pixelcoord(self._dataset.transform, window, row.geometry)
@@ -227,6 +247,7 @@ class Tile:
                     self._annotations['area'].append(area)
                     self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
+        print()
 
     def to_COCO(self, cocopath:str, name:str, **kwargs):
         """Convert input images and annotations to COCO format.
@@ -235,7 +256,7 @@ class Tile:
             output_path: Output path to save COCO json file, default is annotation folder under current directory
             kwargs: Other meta data information for COCO json file "Info" section, could include "description", "url", "version", "year", "contributor"
         """
-        
+        kwargs.update(self._report)
         kwargs["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         self._coco = COCO_parser(kwargs)
         self._coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
@@ -244,7 +265,8 @@ class Tile:
                         file_name = self._images['file_name'],
                         width = self._images['width'],
                         height = self._images['height'],
-                        date_captured = self._images['date_captured']
+                        date_captured = self._images['date_captured'],
+                        window = [window_to_dict(w) for w in self._windows]
                         )
         self._coco.add_annotations(id = self._annotations['id'],
                              image_id = self._annotations['image_id'],
@@ -256,6 +278,7 @@ class Tile:
                              )
         self._coco.save_json(cocopath)
         register_coco_instances(name,{}, cocopath, self._output_path)
+        return self._coco.data
     
     @property
     def data(self):
@@ -280,6 +303,10 @@ class Tile:
         """
         return self._dataset
     
+    def clear(self):
+        for attr in vars(self): 
+            setattr(self, attr, None)
+
     def to_h5(self, save_path:str):
         """
         Save tiles into HDF5 dataset
