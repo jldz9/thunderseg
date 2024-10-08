@@ -1,0 +1,29 @@
+# This is the config file for DLtreeseg program. Program use metric system
+[io]
+workdir = '/home/jldz9/DL/output'
+train_raster_dir = '/home/jldz9/DL/DL_drake/Drake/train'
+val_raster_dir = '/home/jldz9/DL/DL_drake/Drake/test'
+train_shp_dir= '/home/jldz9/DL/DL_drake/Drake/train/shp'
+val_shp_dir= '/home/jldz9/DL/DL_drake/Drake/test/shp'
+[preprocess]
+tile_size = 256 # meter
+buffer_size = 10 # meter
+debug = false
+
+[preprocess.resample]
+enable = false
+resolution = 0.1 # meter
+
+[preprocess.COCO_info]
+name = 'testdataset'
+version = '1.0'
+description = 'This is a test dataset'
+contributor = 'unknown'
+url = "unknown"
+# You can add as much descriptions as you want under this section.
+# e.g.
+# time = '2019-08-24'
+# email = 'myemail@email.com'
+
+[train]
+train_config = ''
