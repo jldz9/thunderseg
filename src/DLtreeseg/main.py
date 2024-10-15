@@ -4,9 +4,7 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
-from detectron2.model_zoo import get_config
-from detectron2.config import LazyConfig
-from DLtreeseg.core import Tile, create_project_structure, 
+from DLtreeseg.core import Tile, create_project_structure
 from DLtreeseg.utils import  read_toml
 from DLtreeseg._version import __version__
 

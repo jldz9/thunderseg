@@ -11,7 +11,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 
-from detectron2.structures import BoxMode
 import numpy as np
 from rasterio.windows import Window
 from shapely import Polygon, unary_union
@@ -242,9 +241,9 @@ class COCO_parser_backup:
                         num_keypoints :list = [],
                         bbox_mode = 'xywh'):
         if bbox_mode == 'xyxy':
-            bbox_mode = [BoxMode.XYXY_ABS]*len(id)
+            bbox_mode = ['xyxy']*len(id)
         elif bbox_mode == 'xywh':
-            bbox_mode = [BoxMode.XYWH_ABS]*len(id)
+            bbox_mode = ['xywh']*len(id)
         elif isinstance(bbox_mode, list):
             bbox_mode = bbox_mode
         else:
