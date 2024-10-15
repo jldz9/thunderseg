@@ -4,9 +4,6 @@ sys.path.append('/home/jldz9/DL/DL_packages/detectree2/detectree2')
 sys.path.append('/home/jldz9/DL/DL_packages/DLtreeseg/src')
 from pathlib import Path
 import glob
-from detectron2.config import get_cfg
-from detectron2 import model_zoo
-from detectron2.engine import DefaultPredictor
 import rasterio as rio
 import geopandas as gpd 
 """
