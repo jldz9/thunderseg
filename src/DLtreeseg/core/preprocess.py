@@ -10,17 +10,18 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-
+import cv2
 import geopandas as gpd
 import numpy as np
+from pycocotools.coco import COCO
 import rasterio as rio
-from detectron2.data.datasets import register_coco_instances
-from detectron2.data import MetadataCatalog, DatasetCatalog
 from rasterio.io import DatasetReader, MemoryFile
 from rasterio.windows import Window
 from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
+import torch
+from torch.utils.data import Dataset
 
 from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std
 from DLtreeseg.core import save_h5, to_file
@@ -182,7 +183,7 @@ class Tile:
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            #to_file(filename, tile_data, tile_profile, suffix=suffix)
+            to_file(filename, tile_data, tile_profile, suffix=suffix)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         mean, std = get_mean_std(self._stack_tiles)
@@ -249,7 +250,7 @@ class Tile:
                     self._annotations['segmentation'].append(pixel_coord)
         print()
 
-    def to_COCO(self, cocopath:str, name:str, **kwargs):
+    def to_COCO(self, cocopath:str, **kwargs):
         """Convert input images and annotations to COCO format.
         Args:
             info: Information of dataset for COCO json file, default is an empty dict
@@ -277,7 +278,6 @@ class Tile:
                              segmentation = self._annotations['segmentation']
                              )
         self._coco.save_json(cocopath)
-        register_coco_instances(name,{}, cocopath, self._output_path)
         return self._coco.data
     
     @property
@@ -317,7 +317,60 @@ class Tile:
                 windows = pack_h5_list(self._windows),
                 profiles = pack_h5_list(self._profiles)
                 )
-        
-    
 
+class LoadDataset(Dataset):
+    def __init__(self, coco:str, img_dir:str=None, transform=None):
+        """
+        Args:
+            coco : The single json file path exported from Tile.to_COCO represent the image dataset
+            img_dir : Not required, normally obtained from COCO file, will find image under it if specified
+            transform : transform fron torchvision.transforms
+        """
+        self._coco = COCO(coco)
+        if img_dir is not None:
+            self._img_dir = img_dir
+        else: 
+            # Get parent path of the first availiable image in the dataset
+            self._img_dir = Path(self._coco.imgs[coco.getImgIds()[0]]['file_name']).parent.as_posix() 
+        self._transform = transform
+
+    def __len__(self):
+        return len(self._coco.imgs)
+    
+    def __getitem__(self, idx):
+        image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
+        annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
+        image, target = self._load_image_target(image_info, annotation_ids)
+        if self._transform:
+            image = self._transform(image)
+        return image, target
+
+    def _load_image_target(self, image_info, annotation_ids):
+        if not annotation_ids:
+            return [], []
+        if int(self._coco.dataset['info']['band']) >= 3:
+            with rio.open(image_info['file_name']) as f:
+                image = f.read()
+        else: 
+            image = cv2.imread(image_info['file_name'])
+            image = np.transpose(image, (2, 0, 1)) # cv2 read as (H,W,C) convert to (C, H, W)
+        anns = self._coco.loadAnns(annotation_ids)
+        bboxes = [ann['bbox'] if ann['bbox_mode'] == 'xyxy' 
+                 else self._xywh_to_xyxy(ann['bbox'])
+                 for ann in anns]
+        masks = [self._coco.annToMask(ann) for ann in anns]
+
+        labels = [ann['category_id'] for ann in anns]
+
+        return torch.as_tensor(image, dtype=torch.float32), {'masks': torch.as_tensor(masks, dtype=torch.uint8), 
+                                        'bboxes': torch.as_tensor(bboxes, dtype=torch.float32), 
+                                        'labels': torch.as_tensor(labels, dtype=torch.int64)}
+
+        
+    def _xywh_to_xyxy(bbox:list):
+        """Convert [x, y, width, height] to [xmin, ymin, xmax, ymax]"""
+        return [bbox[0], bbox[1], bbox[0]+bbox[2], bbox[1]+bbox[3]]
+
+    
+    
     
