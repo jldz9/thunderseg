@@ -5,3 +5,4 @@ src/DLtreeseg/utils/__pycache__/tool.cpython-312.pyc
 src/DLtreeseg/utils/__pycache__/__init__.cpython-312.pyc
 test/test.py
 test/test.py
+lightning_logs/version_0/hparams.yaml
