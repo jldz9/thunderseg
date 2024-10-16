@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 import cv2
 import geopandas as gpd
+import lightning as L
 import numpy as np
 from pycocotools.coco import COCO
 import rasterio as rio
@@ -21,10 +22,13 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, random_split
+from torchvision import transforms 
 
 from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std
 from DLtreeseg.core import save_h5, to_file
+
+import torchvision.datasets.mnist
 
 
 class Tile: 
@@ -159,8 +163,10 @@ class Tile:
         """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
         if mode == 'rgb':
             suffix = 'png'
-        elif mode == 'tig':
+            band = 3
+        elif mode == 'ms':
             suffix = 'tif'
+            band = self._dataset.count
         self._get_window()
         tiles_list = []
         self._profiles = []
@@ -195,7 +201,7 @@ class Tile:
                         'original_size': str(rio.open(self.fpth).shape),
                         'buffed_size': str(self._dataset.shape),
                         'crs': str(self._dataset.crs.to_epsg()),
-                        'band': self._dataset.count,
+                        'band': band,
                         'affine': (self._dataset.transform.a, 
                                 self._dataset.transform.b,
                                 self._dataset.transform.c,
@@ -347,7 +353,9 @@ class LoadDataset(Dataset):
 
     def _load_image_target(self, image_info, annotation_ids):
         if not annotation_ids:
-            return [], []
+            return torch.as_tensor(image, dtype=torch.float32), {'masks': [], 
+                                        'bboxes': [], 
+                                        'labels': []}
         if int(self._coco.dataset['info']['band']) >= 3:
             with rio.open(image_info['file_name']) as f:
                 image = f.read()
@@ -371,6 +379,49 @@ class LoadDataset(Dataset):
         """Convert [x, y, width, height] to [xmin, ymin, xmax, ymax]"""
         return [bbox[0], bbox[1], bbox[0]+bbox[2], bbox[1]+bbox[3]]
 
+class LoadDataModule(L.LightningDataModule):
+    def __init__(self, train_coco, 
+                 predict_coco = None,
+                 batch_size: int = 32,
+                 num_workers: int = 16,
+                 transform= None):
+        super().__init__()
+        self.train_coco = train_coco
+        self.predict_coco = predict_coco
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.transform = transform
+       
     
+    def prepare_data(self):
+        pass
+
+
+    def setup(self, stage=None, train_pct: float= 0.8, val_pct :float = 0.1, test_pct : float= 0.1):
+        dataset = LoadDataset(coco = self.train_coco, transform=self.transform)
+        if train_pct+val_pct+test_pct != 1.0: 
+            raise ValueError('The sum of train, validate and test set percentage is greater than 100%')
+        train_size = int(train_pct*len(dataset))
+        val_size = int(val_pct*len(dataset))
+        test_size = len(dataset) - (train_size + val_size)
+        train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
+        if stage == 'fit':
+            self.train_dataset = train_dataset
+            self.val_dataset = val_dataset
+        if stage == 'test':
+            self.test_dataset = test_dataset
+        if stage == 'predict':
+            self.predict_dataset = LoadDataset(coco=self.predict_coco, transform=self.transform)
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
     
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+    
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+    
+    def predict_dataloader(self):
+        return DataLoader(self.predict_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
     
