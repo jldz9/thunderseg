@@ -18,9 +18,13 @@ import rasterio as rio
 import torch
 
 
-def create_project_structure(workdir: str):
+def create_project_structure(workdir: str) -> SimpleNamespace:
     """
     Create the necessary file structure for detectron2.
+    Args: 
+        Workdir: The root dir use to create directory strucutre
+    Returns:
+        A SimpleNamespace with .annotations, .train, .train_shp, .val, .val_shp, .test, .result
     """
     workdir = Path(workdir)
     directories = dict(
@@ -72,14 +76,21 @@ def save_h5(save_path:str, data:np.ndarray = [], attrs:dict = None, **kwarg):
                 grp.create_dataset(key, data=value)
     print(f'{save_path} saved!')
 
-def to_file(path_to_file:str, data:np.ndarray, profile=None, suffix:str='tif'):
+def to_file(path_to_file:str, data:np.ndarray, profile=None, mode:str='rgb'):
     path_to_file = Path(path_to_file)
-    profile['driver'] = suffix
-    if suffix.lower() == 'png' or suffix.lower() == 'jpg':
+    if mode.lower() == 'rgb':
+        with rio.open(path_to_file,'w', **profile) as dst:
+            for i in range(0,3):
+                dst.write(data[i], i+1)
+    if mode == 'ms':
+        with rio.open(path_to_file, 'w', **profile) as dst:
+            dst.write(data)
+
+def to_png(data: np.ndarray, path_to_file:str):
         band1 = data[0] # B
         band2 = data[1] # G
         band3 = data[2] # R
-        stack = np.stack([band1, band2, band3], axis=-1)
+        stack = np.stack([band1, band2, band3], axis=0)
         min_val = np.min(stack)  # Minimum value in the array
         max_val = np.max(stack)
         if max_val == min_val:
@@ -88,8 +99,4 @@ def to_file(path_to_file:str, data:np.ndarray, profile=None, suffix:str='tif'):
             normalized_array = (stack - min_val) / (max_val - min_val) * 255
         
         array_bgr = cv2.cvtColor(normalized_array, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(path_to_file.with_suffix(f'.{suffix.lower()}'), array_bgr)
-    if suffix == 'tif':
-        with rio.open(path_to_file, 'w', **profile) as dst:
-            dst.write(data)
-
+        cv2.imwrite(path_to_file, array_bgr)
