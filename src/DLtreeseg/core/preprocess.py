@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import cv2
 import geopandas as gpd
 import lightning as L
@@ -22,13 +24,12 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 import torch
+from torchvision import tv_tensors
 from torch.utils.data import Dataset, DataLoader, random_split
-from torchvision import transforms 
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std
+from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
 from DLtreeseg.core import save_h5, to_file
 
-import torchvision.datasets.mnist
 
 
 class Tile: 
@@ -39,7 +40,7 @@ class Tile:
     def __init__(self,
                  fpth: str,
                  output_path: str = '.',
-                 tile_size : int = 256,
+                 tile_size : int = 236,
                  buffer_size : int = 10,
                  debug = False
                  ):
@@ -159,13 +160,11 @@ class Tile:
             dst.write(data)
         self._dataset = memfile.open()
 
-    def tile_image(self, mode='rgb'):
+    def tile_image(self, mode='rgb', shp_path: str = None):
         """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
         if mode == 'rgb':
-            suffix = 'png'
             band = 3
         elif mode == 'ms':
-            suffix = 'tif'
             band = self._dataset.count
         self._get_window()
         tiles_list = []
@@ -178,18 +177,19 @@ class Tile:
             'transform': self._dataset.window_transform(window),
             'height': window.height,
             'width': window.width,
+            'count': band
         })
             tiles_list.append(tile_data)
             self._profiles.append(tile_profile)
             sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} image tile')
             sys.stdout.flush()
             self._images['id'].append(idx+1)
-            filename = f'{self._output_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.{suffix}'
+            filename = f'{self._output_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.tif'
             self._images['file_name'].append(filename)
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            to_file(filename, tile_data, tile_profile, suffix=suffix)
+            to_file(filename, tile_data, tile_profile, mode=mode)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         mean, std = get_mean_std(self._stack_tiles)
@@ -215,8 +215,9 @@ class Tile:
                         'pixel_std' : [float(i) for i in std],
                         'band_order': 'BGREN'
                         }
-        print()
-        
+        if shp_path is not None and Path(shp_path).is_file():
+            self.tile_shape(shp_path)
+   
     def tile_shape(self, shp_path: str):
         """Use raster window defined by _get_window to tile input shapefiles.
         Args:
@@ -256,15 +257,17 @@ class Tile:
                     self._annotations['segmentation'].append(pixel_coord)
         print()
 
-    def to_COCO(self, cocopath:str, **kwargs):
+    def to_COCO(self, **kwargs) -> str:
         """Convert input images and annotations to COCO format.
         Args:
-            info: Information of dataset for COCO json file, default is an empty dict
-            output_path: Output path to save COCO json file, default is annotation folder under current directory
-            kwargs: Other meta data information for COCO json file "Info" section, could include "description", "url", "version", "year", "contributor"
+            kwargs: Meta data provided to this method that store in "Info" section. Needs to be json serializable. 
+        Return: 
+            self._coco_path: The path to COCO json file
+        
         """
         kwargs.update(self._report)
         kwargs["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        assert_json_serializable(**kwargs)
         self._coco = COCO_parser(kwargs)
         self._coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
         self._coco.add_licenses(license_id=[1],license_url=[''],license_name=[''])
@@ -283,8 +286,10 @@ class Tile:
                              iscrowd = self._annotations['iscrowd'],
                              segmentation = self._annotations['segmentation']
                              )
-        self._coco.save_json(cocopath)
-        return self._coco.data
+        self._coco_path = f'{self._output_path}/{self.fpth.stem}_coco.json'
+        self._coco.save_json(self._coco_path)
+        print(f'COCO saved at {self._coco_path}')
+        return self._coco_path
     
     @property
     def data(self):
@@ -324,11 +329,144 @@ class Tile:
                 profiles = pack_h5_list(self._profiles)
                 )
 
-class LoadDataset(Dataset):
-    def __init__(self, coco:str, img_dir:str=None, transform=None):
+
+# Make transforms 
+def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
+    """
+    Apply transform to both image and target using Albumentations, 
+    Args:
+        image: should be a numpy array with shape of (Height,Width,Channel)
+        target: should be a dict contains bbox, mask, 
+    """
+
+    three_channel_image_only_transform = A.Compose(
+        [A.SomeOf([ 
+        A.PlanckianJitter(),
+        A.RandomBrightnessContrast(brightness_limit=(-0.5, 0.5), contrast_limit=(-0.5, 0.5)),
+        A.RandomToneCurve(),
+        ], n=1, p=0.5)
+        ])
+    
+    image_only_transform = A.Compose([A.SomeOf([
+        A.Downscale(scale_range=(0.5, 1)),
+        A.GaussNoise(noise_scale_factor=0.5),
+        A.Sharpen(),
+        A.AdvancedBlur(),
+        A.Defocus(),
+        A.MotionBlur(allow_shifted=False)
+    ], n=2, p=0.5),
+    A.Normalize(mean=mean, std=std, max_pixel_value=1)])
+
+    image_and_target_transform = A.Compose([A.SomeOf([
+        A.PixelDropout(),
+        A.RandomCrop(height=224, width=224),
+        A.HorizontalFlip(),
+        A.RandomRotate90(),
+    ], n=2, p=0.5),
+    ToTensorV2()])
+    if train is True:
+        if image.shape[2] < 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
+            temp = three_channel_image_only_transform(image=image)
+            image = temp['image']
+        temp = image_only_transform(image=image)
+        image = temp['image']
+        temp = image_and_target_transform(image=image, 
+                                        masks=target['masks'],
+                                        )
+        image = temp['image']
+        target['area'] = torch.tensor([int(np.sum(mask.numpy())) for mask in temp['masks']])
+        drop_index = np.where(target['area'].numpy()<10)[0]
+        target['area'] = [j for i, j in enumerate(target['area']) if i not in list(drop_index)]
+        if len(target['area']) >1:
+             target['area'] = torch.tensor(target['area'])
+        else:
+            target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
+            target['labels'] = torch.zeros((0,), dtype=torch.int64)
+            target['masks'] = torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8)
+            return image, target
+        target['masks'] = torch.stack([j for i, j in enumerate(temp['masks']) if i not in list(drop_index)])
+        target['boxes'] = torch.tensor([bbox_from_mask(mask.numpy()) for mask in target['masks']])
+        target['bbox_mode'] = ['xyxy']* len(target['area'])
+        return image, target
+    elif train is False:
+        predict_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
+                                       ToTensorV2()])
+        temp = predict_transform(image=image)
+        image = temp['image']
+        return image
+    
+class TrainDataset(Dataset):
+    def __init__(self, coco:str, transform=get_transform):
         """
         Args:
             coco : The single json file path exported from Tile.to_COCO represent the image dataset
+            img_dir : Not required, normally obtained from COCO file, will find image under it if specified
+            transform : transform fron torchvision.transforms
+        """
+        self._coco = COCO(coco)
+        # Get parent path of the first availiable image in the dataset
+        self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
+        self._transform = transform
+    def __len__(self):
+        return len(self._coco.imgs)
+
+    def __getitem__(self, idx):
+        attempts = 0
+        max_attempts = len(self._coco.imgs)
+        while attempts< max_attempts:
+            image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
+            annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
+            if len(annotation_ids) > 0:
+                image, target = self._load_image_target(image_info, annotation_ids)
+                if self._transform:
+                    image, target= self._transform(image, target)
+                    return image, target
+            else:
+                idx = (idx+1)% len(self._coco.imgs)
+                attempts += 1
+
+    def _load_image_target(self, image_info, annotation_ids):
+        with rio.open(image_info['file_name']) as f:
+            image = f.read()
+        image_hwc = np.transpose(image, (1,2,0))
+        anns = self._coco.loadAnns(annotation_ids)
+        target = {}
+        # ID
+        target["image_id"] = image_info['id']
+
+        # Bboxes
+        target["boxes"] = [ann['bbox'] for ann in anns]
+        target['bbox_mode'] = [ann['bbox_mode'] for ann in anns]
+
+        # Masks
+        masks = [self._coco.annToMask(ann) for ann in anns]
+        target['masks'] = masks
+        
+        # Labels
+        labels = [ann['category_id'] for ann in anns]
+        target['labels'] = torch.tensor(labels)
+
+        # Area
+        areas = [ann['area'] for ann in anns]
+        target['area'] = areas
+
+        # Iscrowd
+        iscrowd = [ann['iscrowd'] for ann in anns]
+        target['iscrowd'] = torch.tensor(iscrowd)
+
+        return image_hwc, target
+ 
+    def _xywh_to_xyxy(self, single_bbox:list):
+        """Convert [x, y, width, height] to [xmin, ymin, xmax, ymax]"""
+        
+        return [single_bbox[0], single_bbox[1], single_bbox[0]+single_bbox[2], single_bbox[1]+single_bbox[3]]
+
+class PreditDataset(Dataset):
+    """Predict Dataset with no target export"""
+    def __init__(self, coco:str, img_dir:str=None, transform=None):
+        """ 
+        Args:
+            coco : The single json file path exported from Tile.to_COCO represent the predict image dataset
             img_dir : Not required, normally obtained from COCO file, will find image under it if specified
             transform : transform fron torchvision.transforms
         """
@@ -337,53 +475,26 @@ class LoadDataset(Dataset):
             self._img_dir = img_dir
         else: 
             # Get parent path of the first availiable image in the dataset
-            self._img_dir = Path(self._coco.imgs[coco.getImgIds()[0]]['file_name']).parent.as_posix() 
+            self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix() 
         self._transform = transform
-
+    
     def __len__(self):
         return len(self._coco.imgs)
-    
+
     def __getitem__(self, idx):
-        image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
-        annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
-        image, target = self._load_image_target(image_info, annotation_ids)
+        with rio.open(self._coco.imgs[idx+1]['file_name']) as f:
+            image = f.read()
+        
         if self._transform:
             image = self._transform(image)
-        return image, target
 
-    def _load_image_target(self, image_info, annotation_ids):
-        if not annotation_ids:
-            return torch.as_tensor(image, dtype=torch.float32), {'masks': [], 
-                                        'bboxes': [], 
-                                        'labels': []}
-        if int(self._coco.dataset['info']['band']) >= 3:
-            with rio.open(image_info['file_name']) as f:
-                image = f.read()
-        else: 
-            image = cv2.imread(image_info['file_name'])
-            image = np.transpose(image, (2, 0, 1)) # cv2 read as (H,W,C) convert to (C, H, W)
-        anns = self._coco.loadAnns(annotation_ids)
-        bboxes = [ann['bbox'] if ann['bbox_mode'] == 'xyxy' 
-                 else self._xywh_to_xyxy(ann['bbox'])
-                 for ann in anns]
-        masks = [self._coco.annToMask(ann) for ann in anns]
-
-        labels = [ann['category_id'] for ann in anns]
-
-        return torch.as_tensor(image, dtype=torch.float32), {'masks': torch.as_tensor(masks, dtype=torch.uint8), 
-                                        'bboxes': torch.as_tensor(bboxes, dtype=torch.float32), 
-                                        'labels': torch.as_tensor(labels, dtype=torch.int64)}
-
-        
-    def _xywh_to_xyxy(bbox:list):
-        """Convert [x, y, width, height] to [xmin, ymin, xmax, ymax]"""
-        return [bbox[0], bbox[1], bbox[0]+bbox[2], bbox[1]+bbox[3]]
+        return image
 
 class LoadDataModule(L.LightningDataModule):
     def __init__(self, train_coco, 
                  predict_coco = None,
-                 batch_size: int = 32,
-                 num_workers: int = 16,
+                 batch_size: int = 2,
+                 num_workers: int = 0,
                  transform= None):
         super().__init__()
         self.train_coco = train_coco
@@ -392,13 +503,11 @@ class LoadDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.transform = transform
        
-    
     def prepare_data(self):
         pass
 
-
-    def setup(self, stage=None, train_pct: float= 0.8, val_pct :float = 0.1, test_pct : float= 0.1):
-        dataset = LoadDataset(coco = self.train_coco, transform=self.transform)
+    def setup(self, stage=None, train_pct:float=0.8, val_pct:float=0.1, test_pct:float=0.1):
+        dataset = TrainDataset(coco = self.train_coco, transform=LoadDataModule.get_transform(train=True))
         if train_pct+val_pct+test_pct != 1.0: 
             raise ValueError('The sum of train, validate and test set percentage is greater than 100%')
         train_size = int(train_pct*len(dataset))
@@ -411,17 +520,41 @@ class LoadDataModule(L.LightningDataModule):
         if stage == 'test':
             self.test_dataset = test_dataset
         if stage == 'predict':
-            self.predict_dataset = LoadDataset(coco=self.predict_coco, transform=self.transform)
-
+            self.predict_dataset = PreditDataset(coco=self.predict_coco, transform=self.transform)
+    @staticmethod
+    def get_transform(train:bool = True):
+        transforms = []
+        if train:
+            transforms.append(T.RandomHorizontalFlip(0.5))
+        transforms.append(T.ToDtype(torch.float, scale=True))
+        transforms.append(T.ToPureTensor())
+        return T.Compose(transforms)
+    
+    @staticmethod
+    def collate_fn(batch):
+        return tuple(zip(*batch))
+    
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.train_dataset, 
+                          batch_size=self.batch_size, 
+                          num_workers=self.num_workers, 
+                          collate_fn=LoadDataModule.collate_fn)
     
     def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.val_dataset, 
+                          batch_size=self.batch_size, 
+                          num_workers=self.num_workers,
+                          collate_fn=LoadDataModule.collate_fn)
     
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.test_dataset, 
+                          batch_size=self.batch_size, 
+                          num_workers=self.num_workers,
+                          collate_fn=LoadDataModule.collate_fn)
     
     def predict_dataloader(self):
-        return DataLoader(self.predict_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.predict_dataset, 
+                          batch_size=self.batch_size, 
+                          num_workers=self.num_workers,
+                          collate_fn=LoadDataModule.collate_fn)
     
