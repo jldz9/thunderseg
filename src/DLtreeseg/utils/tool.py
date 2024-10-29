@@ -15,29 +15,56 @@ import numpy as np
 from rasterio.windows import Window
 from shapely import Polygon, unary_union
 
+def assert_json_serializable(**kwargs):
+    for key, value in kwargs.items():
+        try:
+            # Try to serialize the value
+            json.dumps(value)
+        except (TypeError, ValueError) as e:
+            # Raise an assertion error if the value is not serializable
+            assert False, f"Value for key '{key}' is not JSON serializable: {e}"
+
+def bbox_from_mask(mask: np.ndarray) -> list:
+    """Generate a (x_min, y_min, x_max, y_max) bbox from imput binary mask
+    Args:
+        mask: A single objective binary mask
+    Return:
+        bbox: A bbox list [x_min, y_min, x_max, y_max]
+    """
+    rows = np.any(mask, axis=1)
+    if not rows.any():
+        return [-1, -1, -1, -1]
+    cols = np.any(mask, axis=0)
+    y_min, y_max = np.where(rows)[0][[0, -1]]
+    x_min, x_max = np.where(cols)[0][[0, -1]]
+    return [x_min, y_min, x_max, y_max]
+
+
+
+def get_mean_std(data: np.ndarray) -> tuple:
+        """Calculate mean and std for input raster data.
+        Args:
+            data: should be stack of data (images, band, height, width)
+        Returns:
+            mean: Mean value of input data
+            std: Standard deviation of input data
+        """
+        mean = np.mean(data, axis=(0,2,3))
+        std = np.std(data, axis=(0,2,3))
+        return mean, std
+
+
 # pack list into numpy scalar data which can be storage into hdf5 dataset
 def pack_h5_list(data: list):
     pickle_object = pickle.dumps(data)
     return np.void(pickle_object)
-# unpack numpy scalar data to list
-def unpack_h5_list(data: np.void):
-    return pickle.loads(data.tobytes())
 
-def window_to_dict(window: Window) -> dict:
-    """Convert rasterio Window into dict, in order to save to COCO 
-    Args:
-        window: The single rasterio Window data
-    """
-    window_dict  = {
-        "col_off": int(window.col_off),
-        "row_off": int(window.row_off),
-        "width": int(window.width),
-        "height": int(window.height)
-    }
-    return window_dict
-
-def windowdict_to_window(window_dict:dict)-> Window:
-    return Window(window_dict['col_off'], window_dict['row_off'],window_dict['width'],window_dict['height'])
+def read_toml(config_path) -> dict:
+    """Read toml config file used by DLtreeseg"""
+    with open(config_path, 'rb') as f:
+        tmp = tomllib.load(f)
+    toml = SimpleNamespace_ext(**tmp)
+    return toml
 
 def to_pixelcoord(transform, window, polygon: Polygon) -> list :
     """ Convert geographic coords in polygon to local pixel-based coords by bound box.
@@ -65,24 +92,29 @@ def to_pixelcoord(transform, window, polygon: Polygon) -> list :
     pixelcoord_list = [point for coord in pixelcoord for point in coord]
     return pixelcoord_list
 
-def read_toml(config_path) -> dict:
-    """Read toml config file used by DLtreeseg"""
-    with open(config_path, 'rb') as f:
-        tmp = tomllib.load(f)
-    toml = SimpleNamespace_ext(**tmp)
-    return toml
+# unpack numpy scalar data to list
+def unpack_h5_list(data: np.void):
+    return pickle.loads(data.tobytes())
 
-def get_mean_std(data: np.ndarray):
-        """Calculate mean and std for input raster data.
-        Args:
-            data: should be stack of data (images, band, height, width)
-        Returns:
-            mean: Mean value of input data
-            std: Standard deviation of input data
-        """
-        mean = np.mean(data, axis=(0,2,3))
-        std = np.std(data, axis=(0,2,3))
-        return mean, std
+def window_to_dict(window: Window) -> dict:
+    """Convert rasterio Window into dict, in order to save to COCO 
+    Args:
+        window: The single rasterio Window data
+    """
+    window_dict  = {
+        "col_off": int(window.col_off),
+        "row_off": int(window.row_off),
+        "width": int(window.width),
+        "height": int(window.height)
+    }
+    return window_dict
+
+def windowdict_to_window(window_dict:dict)-> Window:
+    return Window(window_dict['col_off'], window_dict['row_off'],window_dict['width'],window_dict['height'])
+
+
+
+
 def read_json(json_path: str):
         with open(json_path, 'r') as f:
             COCO = json.load(f)
@@ -464,13 +496,16 @@ class COCO_parser:
             json.dump(self.COCO, f, indent=4)
 
 class SimpleNamespace_ext(SimpleNamespace):
+    """An extension of SimpleNamespace, make sure all levels of keys in dict are converted into namespace not
+    only the first level by using SimpleNamespace_ext(**your_dict)
+    """
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
             if isinstance(value, dict):
                 kwargs[key] = self._nested_dict(value)
         super().__init__(**kwargs)
 
-    def _nested_dict(self, d:dict):
+    def _nested_dict(self, d:dict) -> SimpleNamespace:
         if not isinstance(d, dict):
             return d
         ns = SimpleNamespace()
@@ -487,4 +522,4 @@ class SimpleNamespace_ext(SimpleNamespace):
             self.__dict__.update(other.__dict__)
         else: 
             raise TypeError('Only able to append SimpleNamespace')
-    
+
