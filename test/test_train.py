@@ -1,121 +1,102 @@
 
 from pathlib import Path
-import os
-os.environ.get('PROJ_LIB')
-os.environ['PROJ_LIB'] = '/home/jldz9/miniconda3/envs/DL/share/proj'
-import detectron2
-from detectron2.utils.logger import setup_logger
-setup_logger()
 import sys
-sys.path.append('/home/jldz9/DL/DL_packages/DLtreeseg/src')
-import os
+sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
 import torch
 import numpy as np
-from detectron2 import model_zoo
-from detectron2.engine import DefaultTrainer, DefaultPredictor
-from detectron2.config import get_cfg
-from detectron2.data import DatasetCatalog, MetadataCatalog
-from detectron2.data.datasets import register_coco_instances
-from detectron2.data import build_detection_train_loader, build_detection_test_loader
-from detectron2.evaluation import COCOEvaluator
-from detectron2.modeling import build_model
-from detectron2.solver import build_optimizer
-from detectron2.engine import default_argument_parser, default_setup, hooks, launch
-from detectron2.checkpoint import DetectionCheckpointer
-from detectron2.solver import build_lr_scheduler
-from detectron2.utils.events import EventStorage
+import lightning as L
+from DLtreeseg.core import Tile, create_project_structure, MaskRCNNModule, LoadDataModule
 
-from DLtreeseg.core import MultiBand_Trainer
-from DLtreeseg.core import Tile, create_project_structure, modify_conv1_weights
-
-fpath = Path('/home/jldz9/DL/DL_drake/Drake/Ref/Drake20220928_MS.tif')
-train_shp_path = Path('/home/jldz9/DL/DL_drake/shp/shurbcrown_train.shp')
-val_shp_path = Path('/home/jldz9/DL/DL_drake/shp/shurbcrown_val1.shp')
-output_path = Path('/home/jldz9/DL/output')
-outputdir = create_project_structure(output_path)
-train = Tile(fpth=fpath, output_path=outputdir.train, buffer_size=20, tile_size=100)
-train.tile_image()
-train.tile_shape(train_shp_path)
-train.to_COCO(outputdir.train / 'shurbtrain.json', 'shurbtrain')
-val = Tile(fpth=fpath, output_path=outputdir.val, buffer_size=20, tile_size=100)
-val.tile_image()
-val.tile_shape(val_shp_path)
-val.to_COCO(outputdir.val / 'shurbval.json', 'shurbval')
 """
-cfg = get_cfg()
-cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml"))
-cfg.DATASETS.TRAIN = ("shurbtrain",)
-cfg.DATASETS.TEST = ("shurbval",)
-cfg.DATALOADER.NUM_WORKERS = 4
-cfg.SOLVER.IMS_PER_BATCH = 2
-cfg.SOLVER.BASE_LR = 0.00025
-cfg.SOLVER.MAX_ITER = 10000
-cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
-cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml")
-cfg.INPUT.FORMAT = "BGREN"
-cfg.MODEL.PIXEL_MEAN = [0.02572454698383808, 0.036039356142282486, 0.04472881183028221, 0.06555074453353882, 0.09009517729282379]
-cfg.MODEL.PIXEL_STD = [0.02774825319647789, 0.038967959582805634, 0.049449577927589417, 0.06904447078704834, 0.0936022475361824]
-cfg.MODEL.BACKBONE.NAME = "build_custom_resnet_backbone"
-
-cfg.INPUT.IN_CHANNELS = 5
-model = build_model(cfg)
-trainer = MultiBand_Trainer(cfg)
-trainer.resume_or_load(resume=False)
-trainer.train()
+Image preprocess module for DLtreeseg, include image IO, tilling
 """
+import io
+import json
+import sys
+from pathlib import Path
+from datetime import datetime, timezone
 
-cfg = get_cfg()
-cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
-cfg.DATASETS.TRAIN = ("shurbtrain",)
-cfg.DATASETS.TEST = ("shurbval",)
-cfg.DATALOADER.NUM_WORKERS = 2
-cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  # Let training initialize from model zoo
-cfg.SOLVER.IMS_PER_BATCH = 2  # This is the real "batch size" commonly known to deep learning people
-cfg.SOLVER.BASE_LR = 0.00025  # pick a good LR
-cfg.SOLVER.MAX_ITER = 300    # 300 iterations seems good enough for this toy dataset; you will need to train longer for a practical dataset
-cfg.SOLVER.STEPS = []        # do not decay learning rate
-cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128   # The "RoIHead batch size". 128 is faster, and good enough for this toy dataset (default: 512)
-cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  # only has one class (ballon). (see https://detectron2.readthedocs.io/tutorials/datasets.html#update-the-config-for-new-datasets)
-# NOTE: this config means the number of classes, but a few popular unofficial tutorials incorrect uses num_classes+1 here.
-
-cfg.OUTPUT_DIR = outputdir.result.as_posix()
-np.bool = np.bool_
-#trainer = DefaultTrainer(cfg) 
-#trainer.resume_or_load(resume=False)
-#trainer.train()
-
-
-cfg.MODEL.WEIGHTS = os.path.join(cfg.OUTPUT_DIR, "model_final.pth")
-cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.7  # set a custom testing threshold
-predictor = DefaultPredictor(cfg)
-import random
 import cv2
-from detectron2.utils.visualizer import ColorMode
-from detectron2.utils.visualizer import Visualizer
-from detectron2.model_zoo import get_config
-from detectron2.config import get_cfg
-from detectron2.data import detection_utils as utils
+import geopandas as gpd
+import lightning as L
+import numpy as np
+from pycocotools.coco import COCO
+import rasterio as rio
+from rasterio.io import DatasetReader, MemoryFile
+from rasterio.windows import Window
+from rasterio.transform import Affine
+from rasterio.enums import Resampling
+from shapely import box
+import torch
+from torchvision import tv_tensors
+from torch.utils.data import Dataset, DataLoader, random_split
+from torchvision import transforms 
+from torchvision.transforms import v2 as T
+
+from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
+from DLtreeseg.core import save_h5, to_file, TrainDataset, PreditDataset
+from DLtreeseg.model import mask_rcnn_R_101_FPN_3x
+
+import torchvision.datasets.mnist
+
+fpath = Path('/home/vscode/remotehome/DL_drake/Drake/Ref/Drake20220928_MS.tif')
+fpth2 = Path('/home/vscode/remotehome/DL_drake/output/datasets/train/Drake20220928_MS_row5742_col5742.tif')
+shp_path = Path('/home/vscode/remotehome/DL_drake/shp/shurbcrown_train.shp')
+output_path = Path('/home/vscode/remotehome/DL_drake/output')
 """
-dataset_dicts = DatasetCatalog.get("shurbval")
-for d in dataset_dicts:    
-    im = cv2.imread(d["file_name"])
-    outputs = predictor(im)  # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
-    v = Visualizer(im[:, :, ::-1],
-                   metadata=MetadataCatalog.get("shurbval"), 
-                   scale=0.5, 
-                   instance_mode=ColorMode.IMAGE_BW   # remove the colors of unsegmented pixels. This option is only available for segmentation models
-    )
-    out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-    cv2.imshow('image',out.get_image()[:, :, ::-1])
-    cv2.waitKey(0)
-    """
+structure = create_project_structure(output_path)
+tiles = Tile(fpth2, output_path=structure.train, tile_size=50, buffer_size=5)
+tiles.tile_image()
+tiles.tile_shape(shp_path)
+coco_path = tiles.to_COCO()
+"""
+def collate_fn(batch):
+    return tuple(zip(*batch))
 
+def get_transform(train):
+    transforms = []
+    if train:
+        transforms.append(T.RandomHorizontalFlip(0.5))
+    transforms.append(T.ToDtype(torch.float, scale=True))
+    transforms.append(T.ToPureTensor())
+    return T.Compose(transforms)
+coco_path = "/home/vscode/remotehome/DL_drake/output/datasets/train/Drake20220928_MS_row5742_col5742_coco.json"
+#data_module = LoadDataModule(num_workers=5,train_coco=coco_path,batch_size=2)
+#model = MaskRCNNModule(num_classes=num_classes)
+#trainer = L.Trainer(max_epochs=2, accelerator="gpu", devices=1)
+#trainer.fit(model, data_module)
+import torchvision
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 
-dataset_dicts = DatasetCatalog.get("shurbtrain")
-
-for d in dataset_dicts:
-    img = cv2.imread(d["file_name"])
-    visualizer = Visualizer(img[:, :, ::-1], metadata=MetadataCatalog.get('shurbtrain'), scale=0.5)
-    out = visualizer.draw_dataset_dict(d)
-    cv2.imwrite(f'{Path(d["file_name"]).parent}/{Path(d["file_name"]).stem}_val.{Path(d["file_name"]).suffix}',out.get_image()[:, :, ::-1])
+def get_model_instance_segmentation(num_classes):
+    # load an instance segmentation model pre-trained on COCO
+    model = torchvision.models.detection.maskrcnn_resnet50_fpn(weights="DEFAULT")
     
+    # get number of input features for the classifier
+    in_features = model.roi_heads.box_predictor.cls_score.in_features
+    # replace the pre-trained head with a new one
+    model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+
+    # now get the number of input features for the mask classifier
+    in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
+    hidden_layer = 256
+    # and replace the mask predictor with a new one
+    model.roi_heads.mask_predictor = MaskRCNNPredictor(
+        in_features_mask,
+        hidden_layer,
+        num_classes
+    )
+
+    return model
+
+model = get_model_instance_segmentation(2)
+dataset = TrainDataset(coco=coco_path, transform=get_transform(train=True))
+data_loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=4, collate_fn=collate_fn)
+
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+model.to(device)
+
+params = [p for p in model.parameters() if p.requires_grad]
+optimizer = torch.optim.SGD(params, lr=0.005, momentum=0.9, weight_decay=0.0005)
+lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
