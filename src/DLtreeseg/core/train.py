@@ -1,6 +1,7 @@
 import os,sys
 import torch
 import lightning as L
+import copy
 from torchvision.models.detection import maskrcnn_resnet50_fpn_v2
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
@@ -22,25 +23,159 @@ import torchvision
 import math
 from tqdm import tqdm
 from torchvision.transforms import v2 as T
-
+from torchmetrics import Accuracy
 from DLtreeseg.core import TrainDataset, PreditDataset
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+from pycocotools import mask as maskUtils
 
-class MaskRCNNModule(L.LightningModule):
-    def __init__(self, num_classes: int, learning_rate: float = 1e-3):
+class MaskRCNN_RGB(L.LightningModule):
+    def __init__(self, num_classes: int = 2, learning_rate: float = 1e-3):
         super().__init__()
-        self.model = maskrcnn_resnet50_fpn_v2(weights="DEFAULT")
-        # Modify the classifier head to accommodate the custom number of classes
+        # Load maskrcnn model from torchvision
+        self.model = maskrcnn_resnet50_fpn_v2(weights='DEFAULT')
+
+        # Replace the pre-trained head with a new one
         in_features = self.model.roi_heads.box_predictor.cls_score.in_features
         self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+
+        # Get the number of input features for the mask classifier
         in_features_mask = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
         hidden_layer = 256
-        self.model.roi_heads.mask_predictor = MaskRCNNPredictor(
-        in_features_mask,
-        hidden_layer,
-        num_classes
-        )
-        # Hyperparameters
+
+        # Replace the mask predictor with a new one
+        self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
         self.learning_rate = learning_rate
+        
+        
+    def forward(self, images, targets=None):
+        if self.training:
+            train_targets = [{key: target[key] for key in ['boxes', 'labels', 'masks'] if key in target} for target in targets]
+            return self.model(images, train_targets)
+        else:
+            return self.model(images)
+
+    def training_step(self, batch, batch_idx):
+        images, targets = batch
+        loss_dict = self.forward(images, targets)
+        loss = sum(loss for loss in loss_dict.values())
+        self.log('train_loss', loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        images, targets = batch
+        predictions = self.forward(images)
+        score_threshold = 0.5  # TODO: Add this to config file 
+        mask_threshold = 0.5 # TODO: Add this to config file 
+        self.val_results_bbox = []
+        self.val_results_mask = []
+        self.coco_gt = COCO()
+        coco_gt = {
+            'images': [],
+            'annotations': [],
+            'categories': []
+        }
+        for i, prediction in enumerate(predictions):
+            image_id = targets[i]['image_id']
+            for j, _ in enumerate(prediction['masks']):
+                if prediction['scores'][j].item() < score_threshold:
+                    continue
+                binary_mask = (prediction['masks'][j, 0] >mask_threshold).cpu().numpy().astype(np.uint8)
+                if np.sum(binary_mask) == 0:
+                    continue
+
+                rle_mask = maskUtils.encode(np.asfortranarray(binary_mask))
+                self.val_results_mask.append({
+                    'image_id': image_id,
+                    'category_id': int(prediction['labels'][j]),
+                    'segmentation': rle_mask,
+                    'score': float(prediction['scores'][j])
+                })
+                x1, y1, x2, y2 = prediction['boxes'][j].cpu().numpy()
+                self.val_results_bbox.append({
+                'image_id': image_id,
+                'category_id': int(prediction['labels'][j]),
+                'bbox': [x1, y1, x2 - x1, y2 - y1],
+                'score': float(prediction['scores'][j])
+                })
+        for i, target in enumerate(targets):
+            coco_gt['images'].append(
+                {'id': target['image_id'],
+                 'width':images[i].shape[1],
+                 'height': images[i].shape[2]}
+            )
+            coco_gt['categories'].append(
+                {"id":1, "name": "shurb", "supercategory": "plant"}
+            )
+            if len(target['annotation_id']) == 0:
+                coco_gt['annotations'].append(
+                    {
+                        "id": 0,
+                        "image_id": target['image_id'],
+                        "category_id": 1,
+                        "bbox": [0,0,0,0],
+                        "segmentation": maskUtils.encode(np.asfortranarray(np.zeros((images[i].shape[1], 
+                                                                                    images[i].shape[2])).astype(np.uint8))),
+                        'area':0,
+                        'iscrowd':0
+                    })
+            else:
+                for j, ann_id in enumerate(target['annotation_id']):
+                    x1, y1, x2, y2 = target['boxes'][j].cpu().numpy().astype(np.float32)
+                    coco_gt['annotations'].append(
+                        {
+                            "id": ann_id,
+                            "image_id": target['image_id'],
+                            "category_id": target['labels'][j],
+                            "bbox": [x1, y1, x2 - x1, y2 - y1],
+                            "segmentation": maskUtils.encode(np.asfortranarray(target['masks'][j].cpu().numpy())),
+                            'area':target['area'][j].item(),
+                            'iscrowd':target['iscrowd'][j]
+                        }
+                ) 
+        self.coco_gt.dataset = copy.deepcopy(coco_gt)
+        self.coco_gt.createIndex()
+
+    def on_validation_epoch_end(self):
+        if len(self.val_results_bbox) > 0:
+            coco_dt_bbox = self.coco_gt.loadRes(self.val_results_bbox)
+            coco_eval_bbox = COCOeval(self.coco_gt, coco_dt_bbox, iouType='bbox')
+            coco_eval_bbox.evaluate()
+            coco_eval_bbox.accumulate()
+            coco_eval_bbox.summarize()
+            self.log_dict({
+                "bbox_AP": coco_eval_bbox.stats[0],
+                "bbox_AP50": coco_eval_bbox.stats[1],
+                "bbox_AP75": coco_eval_bbox.stats[2]
+            }, on_epoch=True)
+        
+        if len(self.val_results_mask) > 0:
+            coco_dt_mask = self.coco_gt.loadRes(self.val_results_mask)
+            coco_eval_mask = COCOeval(self.coco_gt, coco_dt_mask, iouType='segm')
+            coco_eval_mask.evaluate()
+            coco_eval_mask.accumulate()
+            coco_eval_mask.summarize()
+            self.log_dict({
+                "mask_AP": coco_eval_mask.stats[0],
+                "mask_AP50": coco_eval_mask.stats[1],
+                "mask_AP75": coco_eval_mask.stats[2]
+            }, on_epoch=True)
+            
+            # Reset results storage for the next epoch
+            self.val_results_bbox.clear()
+            self.val_results_mask.clear()
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+        return [optimizer], [scheduler]
+    
+class MaskRCNN_MS(L.LightningModule):
+    def __init__(self, model, num_classes: int = 2, learning_rate: float = 1e-3):
+        super().__init__()
+        self.model = maskrcnn_resnet50_fpn_v2(weights='DEFAULT')
+        in_features = model.roi_heads.box_predictor.cls_score.in_features
+        model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
     def forward(self, images, targets=None):
         return self.model(images, targets)
 
@@ -57,11 +192,19 @@ class MaskRCNNModule(L.LightningModule):
         loss = sum(loss for loss in loss_dict.values())
         self.log('val_loss', loss)
         return loss
+    
+    def test_step(self, batch, batch_idx):
+        images, targets = batch
+        loss_dict = self(images, targets)
+        loss = sum(loss for loss in loss_dict.values())
+        self.log('test_loss', loss)
+        return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9)
-        return optimizer
-    
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+        return [optimizer], [scheduler]
+
 class MaskRCNNLightning(L.LightningModule):
     def __init__(self, num_classes):
         super(MaskRCNNLightning, self).__init__()
@@ -127,12 +270,14 @@ def mask_rcnn(num_classes):
 
     # Get the number of input features for the classifier
     in_features = model.roi_heads.box_predictor.cls_score.in_features
+
     # Replace the pre-trained head with a new one
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
 
     # Get the number of input features for the mask classifier
     in_features_mask = model.roi_heads.mask_predictor.conv5_mask.in_channels
     hidden_layer = 256
+
     # Replace the mask predictor with a new one
     model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
 
@@ -323,8 +468,6 @@ def train_model(coco_path, model_name, num_classes, batch_size, learning_rate, n
         # Save the final model 
         torch.save(model,  model_name + '.pt')
 
-
-
 if __name__=='__main__':
     
-    train_model(coco_path="cocopath", model_name='my_model', transform=get_transform(train=True), num_classes=1, batch_size=1, learning_rate=0.0001, num_epochs=20)
+    train_model(coco_path="cocopath", model_name='my_model', num_classes=1, batch_size=1, learning_rate=0.0001, num_epochs=20)
