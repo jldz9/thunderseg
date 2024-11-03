@@ -37,9 +37,7 @@ def bbox_from_mask(mask: np.ndarray) -> list:
     cols = np.any(mask, axis=0)
     y_min, y_max = np.where(rows)[0][[0, -1]]
     x_min, x_max = np.where(cols)[0][[0, -1]]
-    return [x_min, y_min, x_max, y_max]
-
-
+    return [x_min, y_min, x_max+1, y_max+1]
 
 def get_mean_std(data: np.ndarray) -> tuple:
         """Calculate mean and std for input raster data.
@@ -52,7 +50,6 @@ def get_mean_std(data: np.ndarray) -> tuple:
         mean = np.mean(data, axis=(0,2,3))
         std = np.std(data, axis=(0,2,3))
         return mean, std
-
 
 # pack list into numpy scalar data which can be storage into hdf5 dataset
 def pack_h5_list(data: list):
@@ -112,13 +109,11 @@ def window_to_dict(window: Window) -> dict:
 def windowdict_to_window(window_dict:dict)-> Window:
     return Window(window_dict['col_off'], window_dict['row_off'],window_dict['width'],window_dict['height'])
 
-
-
-
 def read_json(json_path: str):
         with open(json_path, 'r') as f:
             COCO = json.load(f)
         return COCO
+
 class COCO_parser_backup:
 
     """Make COCO Json format (https://github.com/levan92/cocojson/blob/main/docs/coco.md) for images
