@@ -4,11 +4,14 @@
 """
 Image preprocess module for DLtreeseg, include image IO, tilling
 """
+
 import io
 import json
 import sys
-from pathlib import Path
+import warnings
 from datetime import datetime, timezone
+from pathlib import Path
+
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -348,7 +351,7 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
         ])
     
     image_only_transform = A.Compose([A.SomeOf([
-        A.Downscale(scale_range=(0.5, 1)),
+        #A.Downscale(scale_range=(0.5, 1)),
         A.GaussNoise(noise_scale_factor=0.5),
         A.Sharpen(),
         A.AdvancedBlur(),
@@ -359,35 +362,44 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
 
     image_and_target_transform = A.Compose([A.SomeOf([
         A.PixelDropout(),
-        A.RandomCrop(height=224, width=224),
+        
         A.HorizontalFlip(),
         A.RandomRotate90(),
     ], n=2, p=0.5),
+    A.RandomCrop(height=512, width=512),
     ToTensorV2()])
     if train is True:
-        if image.shape[2] < 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
+        if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
             temp = three_channel_image_only_transform(image=image)
             image = temp['image']
         temp = image_only_transform(image=image)
         image = temp['image']
         temp = image_and_target_transform(image=image, 
-                                        masks=target['masks'],
+                                        masks=target['masks']
                                         )
         image = temp['image']
         target['area'] = torch.tensor([int(np.sum(mask.numpy())) for mask in temp['masks']])
         drop_index = np.where(target['area'].numpy()<10)[0]
         target['area'] = [j for i, j in enumerate(target['area']) if i not in list(drop_index)]
         if len(target['area']) >1:
-             target['area'] = torch.tensor(target['area'])
+            target['area'] = torch.tensor(target['area'])
+            target['annotation_id'] = [j for i, j in enumerate(target['annotation_id']) if i not in list(drop_index)]
+            target['masks'] = torch.stack([j for i, j in enumerate(temp['masks']) if i not in list(drop_index)])
+            target['boxes'] = torch.tensor([bbox_from_mask(mask.numpy()) for mask in target['masks']])
+            target['bbox_mode'] = ['xyxy']* len(target['area'])
+            target['iscrowd'] = [int(j) for i, j in enumerate(target['iscrowd'].numpy()) if i not in list(drop_index)]
+            target['labels'] = torch.tensor([int(j) for i, j in enumerate(target['labels'].numpy()) if i not in list(drop_index)])
+            return image, target
         else:
+            target['area'] = torch.zeros((0,),dtype=torch.int64)
+            target['annotation_id'] = []
             target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
             target['labels'] = torch.zeros((0,), dtype=torch.int64)
             target['masks'] = torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8)
+            target['bbox_mode'] = ['xyxy']
+            target['iscrowd'] = []
             return image, target
-        target['masks'] = torch.stack([j for i, j in enumerate(temp['masks']) if i not in list(drop_index)])
-        target['boxes'] = torch.tensor([bbox_from_mask(mask.numpy()) for mask in target['masks']])
-        target['bbox_mode'] = ['xyxy']* len(target['area'])
-        return image, target
+        
     elif train is False:
         predict_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
                                        ToTensorV2()])
@@ -418,8 +430,8 @@ class TrainDataset(Dataset):
             annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
             if len(annotation_ids) > 0:
                 image, target = self._load_image_target(image_info, annotation_ids)
-                if self._transform:
-                    image, target= self._transform(image, target)
+                if self._transform is not None:
+                    image, target= self._transform(image, target, train = True)
                     return image, target
             else:
                 idx = (idx+1)% len(self._coco.imgs)
@@ -433,7 +445,7 @@ class TrainDataset(Dataset):
         target = {}
         # ID
         target["image_id"] = image_info['id']
-
+        target['annotation_id'] = [ann['id'] for ann in anns]
         # Bboxes
         target["boxes"] = [ann['bbox'] for ann in anns]
         target['bbox_mode'] = [ann['bbox_mode'] for ann in anns]
@@ -453,7 +465,7 @@ class TrainDataset(Dataset):
         # Iscrowd
         iscrowd = [ann['iscrowd'] for ann in anns]
         target['iscrowd'] = torch.tensor(iscrowd)
-
+        
         return image_hwc, target
  
     def _xywh_to_xyxy(self, single_bbox:list):
@@ -463,7 +475,7 @@ class TrainDataset(Dataset):
 
 class PreditDataset(Dataset):
     """Predict Dataset with no target export"""
-    def __init__(self, coco:str, img_dir:str=None, transform=None):
+    def __init__(self, coco:str, transform=get_transform):
         """ 
         Args:
             coco : The single json file path exported from Tile.to_COCO represent the predict image dataset
@@ -471,11 +483,7 @@ class PreditDataset(Dataset):
             transform : transform fron torchvision.transforms
         """
         self._coco = COCO(coco)
-        if img_dir is not None:
-            self._img_dir = img_dir
-        else: 
-            # Get parent path of the first availiable image in the dataset
-            self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix() 
+        self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
         self._transform = transform
     
     def __len__(self):
@@ -493,23 +501,24 @@ class PreditDataset(Dataset):
 class LoadDataModule(L.LightningDataModule):
     def __init__(self, train_coco, 
                  predict_coco = None,
-                 batch_size: int = 2,
+                 batch_size: int = 1,
                  num_workers: int = 0,
-                 transform= None):
+                 transform=get_transform):
         super().__init__()
         self.train_coco = train_coco
         self.predict_coco = predict_coco
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.transform = transform
-       
+
     def prepare_data(self):
         pass
 
     def setup(self, stage=None, train_pct:float=0.8, val_pct:float=0.1, test_pct:float=0.1):
-        dataset = TrainDataset(coco = self.train_coco, transform=LoadDataModule.get_transform(train=True))
+        dataset = TrainDataset(coco = self.train_coco, transform=self.transform)
         if train_pct+val_pct+test_pct != 1.0: 
-            raise ValueError('The sum of train, validate and test set percentage is greater than 100%')
+            test_pct = 1 - (train_pct + val_pct)
+            warnings.warn(f'The sum of train, validate, and test percent are greater than %100, setting test set to {test_pct*100}%')
         train_size = int(train_pct*len(dataset))
         val_size = int(val_pct*len(dataset))
         test_size = len(dataset) - (train_size + val_size)
@@ -521,14 +530,6 @@ class LoadDataModule(L.LightningDataModule):
             self.test_dataset = test_dataset
         if stage == 'predict':
             self.predict_dataset = PreditDataset(coco=self.predict_coco, transform=self.transform)
-    @staticmethod
-    def get_transform(train:bool = True):
-        transforms = []
-        if train:
-            transforms.append(T.RandomHorizontalFlip(0.5))
-        transforms.append(T.ToDtype(torch.float, scale=True))
-        transforms.append(T.ToPureTensor())
-        return T.Compose(transforms)
     
     @staticmethod
     def collate_fn(batch):
