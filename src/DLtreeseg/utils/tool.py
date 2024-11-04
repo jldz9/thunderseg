@@ -7,13 +7,18 @@ Tools use by DLtreeseg
 import json
 import pickle
 import tomllib
+from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 
 import numpy as np
+from colorama import Fore, init
 from rasterio.windows import Window
 from shapely import Polygon, unary_union
+
+# Colorama init for color output
+init(autoreset=True)
 
 def assert_json_serializable(**kwargs):
     for key, value in kwargs.items():
@@ -39,6 +44,34 @@ def bbox_from_mask(mask: np.ndarray) -> list:
     x_min, x_max = np.where(cols)[0][[0, -1]]
     return [x_min, y_min, x_max+1, y_max+1]
 
+def recal_pixel_mean_std(n1:int, 
+                         n2:int, 
+                         mean1: np.ndarray, 
+                         std1: np.ndarray,
+                         mean2: np.ndarray,
+                         std2:np.ndarray):
+    """Recalculate mean and standard division of combined image dataset across bands
+        Args:
+    n1: number of images containes in dataset1
+    n2: number of images containes in dataset2
+    mean1: mean of dataset 1 across bands
+    std1: std of dataset 1 across bands
+    mean2: mean of dataset 1 across bands
+    std2: std of dataset 2 across bands
+    """
+    if not all([isinstance(i, np.ndarray) for i in [mean1, std1, mean2, std2]]):
+        raise TypeError(f'Mean and std should be np.ndarray')
+    combined_mean = (n1 * mean1 + n2 * mean2) / (n1 + n2)
+    variance1 = std1**2
+    variance2 = std2**2
+    combined_variance = (
+        (n1 - 1) * variance1 +
+        (n2 - 1) * variance2 +
+        (n1 * n2 / (n1 + n2)) * (mean1 - mean2) ** 2
+        ) / (n1 + n2 - 1)
+    combined_std = np.sqrt(combined_variance)
+    return combined_mean, combined_std
+
 def get_mean_std(data: np.ndarray) -> tuple:
         """Calculate mean and std for input raster data.
         Args:
@@ -51,8 +84,123 @@ def get_mean_std(data: np.ndarray) -> tuple:
         std = np.std(data, axis=(0,2,3))
         return mean, std
 
-# pack list into numpy scalar data which can be storage into hdf5 dataset
+def merge_coco(coco_fpths: tuple | list, output_path: str):
+    """Merge multiple coco files into one coco file, update corresponding ids
+    Args:
+        coco_fpths: A tuple contains multiple coco file paths to merge. 
+        output_path: A pathlike string for the path to save merged coco file
+    """
+    merged_coco = {
+        "info":[],
+        "images": [],
+        "annotations": [],
+        "categories": [],
+        "licenses": []
+    }
+    for file_path in coco_fpths:
+        with open(file_path, 'r') as f:
+            coco = json.load(f)
+        validate_coco(coco)
+        print(f'{Fore.GREEN}Merging {file_path}')
+        # Check there are new licenses present in coco, optional, is okay if no licenses in coco file   
+        if coco.get('licenses', False):
+            license_id_offset = len(merged_coco['licenses'])
+            count = 0
+            for license in coco['licenses']:
+                if license not in merged_coco['licenses'] and not any(d.get('name') == license['name'] for d in merged_coco['licenses']):
+                    count+=1
+                    merged_coco['licenses'].extend([{"id": count+ license_id_offset, **license}])
+        ## This method group the image section (one list of dicts) into lists of dicts depends on license_id
+            split_data = defaultdict(list)
+            list(map(lambda item: split_data[item['license']].append(item), coco['images']))
+            image_group = split_data.values()
+            image_append_list = []
+         ## Change groups of image' license id
+            for group in image_group:
+                old_license_id = group[0]['license']
+                license_name = next((c['name'] for c in coco['licenses'] if c['id'] == old_license_id), None)
+                new_license_id = next((c['id'] for c in merged_coco['licenses'] if c['name'] == license_name),None)
+                new_group = [{**image, "license":new_license_id} for image in group]
+                image_append_list.append(new_group)
+            coco['images'] = [item for sublist in image_append_list for item in sublist]
+        else:
+            print(f'{Fore.YELLOW}no license section found in {file_path}, will ignore license section')
+            
+        # Check if there are new categories present in coco
+        category_id_offset = len(merged_coco["categories"])
+        count = 0
+        for category in coco['categories']:
+            if category not in merged_coco['categories'] and not any(d.get('name') == category['name'] for d in merged_coco['categories']):
+                count+=1
+                new_id = category_id_offset+count
+                merged_coco['categories'].extend([{"id":new_id, **category}])
+        
+        ## This method group the annotation section (one list of dicts) into lists of dicts depends on category_id
+        split_data = defaultdict(list)
+        list(map(lambda item: split_data[item['category_id']].append(item), coco['annotations']))
+        anno_group = split_data.values()
+
+        ## Change groups of annotations' category id
+        anno_append_list = []
+        for group in anno_group:
+            old_category_id = group[0]['category_id']
+            category_name = next((c['name'] for c in coco['categories'] if c['id'] == old_category_id), None)
+            assert category_name is not None, f"Category id {old_category_id} does not exist in categories section"
+            new_category_id = next((c['id'] for c in merged_coco['categories'] if c['name'] == category_name),None)
+            assert new_category_id is not None, f'Not able to find {category_name} in the categories pool'
+            new_group = [{**annotation, "category_id":new_category_id} for annotation in group]
+            anno_append_list.append(new_group)
+        coco['annotations'] = [item for sublist in anno_append_list for item in sublist]
+                
+        # Merge cocos image section
+        image_id_offset = len(merged_coco["images"])
+        new_image_ids = [image["id"]+ image_id_offset for image in coco['images']]
+        coco_images = []
+        for image_dict, new_id in zip(coco['images'], new_image_ids):
+            image_dict['id'] = new_id
+            coco_images.append(image_dict)
+        merged_coco["images"].extend(coco_images)
+        coco['info']['image_ids'] = f'{min(new_image_ids)}-{max(new_image_ids)}'
+
+        ## Change annotations ids
+        annotation_id_offset = len(merged_coco["annotations"])
+        new_annotations_ids = [anno["id"]+ annotation_id_offset for anno in coco['annotations']]
+        coco_annotations=[]
+        for anno_dict, new_id in zip(coco['annotations'], new_annotations_ids):
+            anno_dict['id'] = new_id
+            coco_annotations.append(anno_dict)
+        merged_coco['annotations'].extend([
+                    {**annotation,"image_id": annotation["image_id"] + image_id_offset} 
+                    for annotation in coco_annotations
+                ])
+        coco['info']['annotation_ids'] = f'{min(new_annotations_ids)}-{max(new_annotations_ids)}'
+
+        # Add info in merged_coco['info'] to be add capability to split datasets
+        if len(merged_coco['info']) == 0:
+            merged_coco['info'].extend([{"total_mean":coco['info']['pixel_mean'],
+                                        "total_std":coco['info']['pixel_std'], 
+                                        'number_of_datasets':1}])
+            merged_coco['info'].extend([coco['info']])
+
+        else: 
+            n1 = len(merged_coco['images'])
+            n2 = len(coco['images'])
+            mean1 = np.array(merged_coco['info'][0]['total_mean'])
+            mean2 = np.array(coco['info']['pixel_mean'])
+            assert len(mean1) == len(mean2), f"The dataset {file_path} has {len(mean2)} bands, does not match the rest dataset with {len(mean1)} bands"
+            std1 = np.array(merged_coco['info'][0]['total_std'])
+            std2 = np.array(coco['info']['pixel_std'])
+            total_mean, total_std = recal_pixel_mean_std(n1, n2, mean1, std1, mean2, std2)
+            merged_coco['info'].extend([coco['info']])
+            merged_coco['info'][0]=({"total_mean":total_mean.tolist(),
+                                     "total_std":total_std.tolist(),
+                                     'number_of_datasets':len(merged_coco['info'])-1})
+    with open(output_path, 'w') as f:
+            json.dump(merged_coco, f, indent=4)
+            print(f'{Fore.GREEN}Merged COCO file saved under {output_path}!')
+        
 def pack_h5_list(data: list):
+    """pack list into numpy scalar data which can be storage into hdf5 dataset"""
     pickle_object = pickle.dumps(data)
     return np.void(pickle_object)
 
@@ -113,6 +261,14 @@ def read_json(json_path: str):
         with open(json_path, 'r') as f:
             COCO = json.load(f)
         return COCO
+
+def validate_coco(coco: dict):
+    """ Validate COCO structure to ensure required fields are present. """
+    required_keys = ['images', 'annotations', 'categories']
+    for key in required_keys:
+        if key not in coco:
+            raise ValueError(f"Missing required key: {key}")
+    return True
 
 class COCO_parser_backup:
 
