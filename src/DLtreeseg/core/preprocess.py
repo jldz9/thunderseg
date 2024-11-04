@@ -260,7 +260,7 @@ class Tile:
                     self._annotations['segmentation'].append(pixel_coord)
         print()
 
-    def to_COCO(self, **kwargs) -> str:
+    def to_COCO(self, output_path: str = None, **kwargs) -> str:
         """Convert input images and annotations to COCO format.
         Args:
             kwargs: Meta data provided to this method that store in "Info" section. Needs to be json serializable. 
@@ -289,7 +289,10 @@ class Tile:
                              iscrowd = self._annotations['iscrowd'],
                              segmentation = self._annotations['segmentation']
                              )
-        self._coco_path = f'{self._output_path}/{self.fpth.stem}_coco.json'
+        if output_path is not None:
+            self._coco_path = Path(output_path)
+        else:
+            self._coco_path = f'{self._output_path}/{self.fpth.stem}_coco.json'
         self._coco.save_json(self._coco_path)
         print(f'COCO saved at {self._coco_path}')
         return self._coco_path
@@ -331,8 +334,6 @@ class Tile:
                 windows = pack_h5_list(self._windows),
                 profiles = pack_h5_list(self._profiles)
                 )
-
-
 # Make transforms 
 def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
     """
@@ -431,7 +432,9 @@ class TrainDataset(Dataset):
             if len(annotation_ids) > 0:
                 image, target = self._load_image_target(image_info, annotation_ids)
                 if self._transform is not None:
-                    image, target= self._transform(image, target, train = True)
+                    image, target= self._transform(image, target, train = True, 
+                                                   mean=self._coco.dateset['info']['pixel_mean'],
+                                                   std=self._coco.dateset['info']['pixel_std'])
                     return image, target
             else:
                 idx = (idx+1)% len(self._coco.imgs)
@@ -475,14 +478,16 @@ class TrainDataset(Dataset):
 
 class PreditDataset(Dataset):
     """Predict Dataset with no target export"""
-    def __init__(self, coco:str, transform=get_transform):
+    def __init__(self, coco_train:str, coco_predict:str, transform=get_transform):
         """ 
         Args:
-            coco : The single json file path exported from Tile.to_COCO represent the predict image dataset
+            coco_train
+            coco_predict : The single json file path exported from Tile.to_COCO represent the predict image dataset
             img_dir : Not required, normally obtained from COCO file, will find image under it if specified
             transform : transform fron torchvision.transforms
         """
-        self._coco = COCO(coco)
+        self._train_coco = COCO(coco_train)
+        self._coco = COCO(coco_predict)
         self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
         self._transform = transform
     
@@ -494,7 +499,9 @@ class PreditDataset(Dataset):
             image = f.read()
         
         if self._transform:
-            image = self._transform(image)
+            image = self._transform(image, train=False, 
+                                    mean=self._coco_train.dataset['info'][0]['total_mean'],
+                                    std=self._coco_train.dataset['info'][0]['total_std'])
 
         return image
 
