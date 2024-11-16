@@ -235,14 +235,13 @@ class Tile:
             self._shpdataset = self._shpdataset.to_crs(epsg=self._dataset.crs.to_epsg())
         annotation_id = 1
         for idx, window in enumerate(self._windows):
-            sys.stdout.write(f'\rClipping shapfile for: {idx+1}/{len(self._windows)} tile')
-            sys.stdout.flush()
             geobounds = self._dataset.window_bounds(window)
             bbox = box(*geobounds)
             window_gdf = gpd.GeoDataFrame(geometry=[bbox], crs=self._dataset.crs.to_epsg())
             intersection = gpd.overlay(self._shpdataset, window_gdf, how='intersection')
-            print(f'{idx}:{len(intersection)}')
             if len(intersection) > 0:
+                _num_of_intersect = len(intersection)
+                print(f'found {_num_of_intersect} polygons in tile {idx}')
                 for _, row in intersection.iterrows():
                     pixel_coord = to_pixelcoord(self._dataset.transform, window, row.geometry)
                     area = row.geometry.area/(self._dataset.res[0]*self._dataset.res[1])
@@ -258,7 +257,6 @@ class Tile:
                     self._annotations['area'].append(area)
                     self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
-        print()
 
     def to_COCO(self, output_path: str = None, **kwargs) -> str:
         """Convert input images and annotations to COCO format.
