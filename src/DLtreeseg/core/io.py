@@ -4,21 +4,20 @@
 """
 IO related module for DLtreeseg
 """
-import os
+import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+import tomllib
+import tomli_w
 
 import cv2
-import geopandas as gpd
-from geopandas import GeoDataFrame
 import h5py
 import numpy as np
 import rasterio as rio
-import torch
 
 
-def create_project_structure(workdir: str) -> SimpleNamespace:
+
+def create_project_structure(workdir: str) -> dict:
     """
     Create the necessary file structure for detectron2.
     Args: 
@@ -26,7 +25,7 @@ def create_project_structure(workdir: str) -> SimpleNamespace:
     Returns:
         A SimpleNamespace with .annotations, .train, .train_shp, .val, .val_shp, .test, .result
     """
-    workdir = Path(workdir)
+    workdir = Path(workdir).resolve()
     directories = dict(
             annotations = workdir / "datasets" / "annotations",
             train = workdir / "datasets" / "train",
@@ -38,8 +37,19 @@ def create_project_structure(workdir: str) -> SimpleNamespace:
     )
     for key, directory in directories.items():
         directory.mkdir(parents=True, exist_ok=True)
-        print(f"Created {key} at {directory}")
-    return SimpleNamespace(**directories)
+        print(f"Created {key} folder at {directory}")
+    return {k:v.as_posix() for k, v in directories.items()}
+
+def read_config(config_path) -> dict:
+    """Read toml config file used by DLtreeseg"""
+    with open(config_path, 'rb') as f:
+        toml = tomllib.load(f)
+    return toml
+
+def read_json(json_path: str):
+        with open(json_path, 'r') as f:
+            COCO = json.load(f)
+        return COCO
 
 def save_h5(save_path:str, data:np.ndarray = [], attrs:dict = None, **kwarg):
     """
@@ -76,13 +86,13 @@ def save_h5(save_path:str, data:np.ndarray = [], attrs:dict = None, **kwarg):
                 grp.create_dataset(key, data=value)
     print(f'{save_path} saved!')
 
-def to_file(path_to_file:str, data:np.ndarray, profile=None, mode:str='rgb'):
+def to_file(path_to_file:str, data:np.ndarray, profile=None, mode:str='bgr'):
     path_to_file = Path(path_to_file)
-    if mode.lower() == 'rgb':
+    if mode.lower() == 'bgr':
         with rio.open(path_to_file,'w', **profile) as dst:
             for i in range(0,3):
                 dst.write(data[i], i+1)
-    if mode == 'ms':
+    if mode.lower() == 'ms':
         with rio.open(path_to_file, 'w', **profile) as dst:
             dst.write(data)
 
@@ -100,3 +110,7 @@ def to_png(data: np.ndarray, path_to_file:str):
         
         array_bgr = cv2.cvtColor(normalized_array, cv2.COLOR_RGB2BGR)
         cv2.imwrite(path_to_file, array_bgr)
+
+def write_config(data, write_path):
+    with open(write_path,'wb') as f:
+        tomli_w.dump(data, f)
