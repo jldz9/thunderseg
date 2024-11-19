@@ -1,14 +1,15 @@
 # This is the config file for DLtreeseg program. Program use metric system
 [io]
-workdir = '/home/jldz9/DL/output'
-train_raster_dir = '/home/jldz9/DL/DL_drake/Drake/train'
-val_raster_dir = '/home/jldz9/DL/DL_drake/Drake/test'
-train_shp_dir= '/home/jldz9/DL/DL_drake/Drake/train/shp'
-val_shp_dir= '/home/jldz9/DL/DL_drake/Drake/test/shp'
+workdir = "/home/vscode/remotehome/DL_drake/output"
+train_raster_dir = "/home/vscode/remotehome/DL_drake/Drake/Ref"
+val_raster_dir = "/home/vscode/remotehome/DL_drake/Drake/test"
+train_shp_dir = "/home/vscode/remotehome/DL_drake/shp"
+val_shp_dir = "/home/vscode/remotehome/DL_drake/Drake/test/shp"
 [preprocess]
 tile_size = 256 # meter
 buffer_size = 10 # meter
 debug = false
+mode = 'BGR'
 
 [preprocess.resample]
 enable = false
