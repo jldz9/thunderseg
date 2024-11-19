@@ -5,13 +5,10 @@
 Image preprocess module for DLtreeseg, include image IO, tilling
 """
 
-import io
-import json
 import sys
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -27,7 +24,6 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 import torch
-from torchvision import tv_tensors
 from torch.utils.data import Dataset, DataLoader, random_split
 
 from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
@@ -163,11 +159,11 @@ class Tile:
             dst.write(data)
         self._dataset = memfile.open()
 
-    def tile_image(self, mode='rgb', shp_path: str = None):
+    def tile_image(self, mode='BGR', shp_path: str = None):
         """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
-        if mode == 'rgb':
+        if mode == 'BGR':
             band = 3
-        elif mode == 'ms':
+        elif mode == 'MS':
             band = self._dataset.count
         self._get_window()
         tiles_list = []
@@ -216,7 +212,7 @@ class Tile:
                         'nodata':self._dataset.profile['nodata'],
                         'pixel_mean' : [float(i) for i in mean],
                         'pixel_std' : [float(i) for i in std],
-                        'band_order': 'BGREN'
+                        'mode': mode
                         }
         if shp_path is not None and Path(shp_path).is_file():
             self.tile_shape(shp_path)
@@ -332,7 +328,7 @@ class Tile:
                 windows = pack_h5_list(self._windows),
                 profiles = pack_h5_list(self._profiles)
                 )
-# Make transforms 
+
 def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
     """
     Apply transform to both image and target using Albumentations, 
@@ -431,8 +427,8 @@ class TrainDataset(Dataset):
                 image, target = self._load_image_target(image_info, annotation_ids)
                 if self._transform is not None:
                     image, target= self._transform(image, target, train = True, 
-                                                   mean=self._coco.dateset['info']['pixel_mean'],
-                                                   std=self._coco.dateset['info']['pixel_std'])
+                                                   mean=self._coco.dataset['info']['pixel_mean'],
+                                                   std=self._coco.dataset['info']['pixel_std'])
                     return image, target
             else:
                 idx = (idx+1)% len(self._coco.imgs)
