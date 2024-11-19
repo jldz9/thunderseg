@@ -5,8 +5,10 @@
 Tools use by DLtreeseg 
 """
 import json
+import os
 import pickle
-import tomllib
+import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,8 +16,9 @@ from typing import List, Dict, Any, Optional
 
 import numpy as np
 from colorama import Fore, init
+from pycocotools.coco import COCO
 from rasterio.windows import Window
-from shapely import Polygon, unary_union
+from shapely import Polygon
 
 # Colorama init for color output
 init(autoreset=True)
@@ -43,6 +46,10 @@ def bbox_from_mask(mask: np.ndarray) -> list:
     y_min, y_max = np.where(rows)[0][[0, -1]]
     x_min, x_max = np.where(cols)[0][[0, -1]]
     return [x_min, y_min, x_max+1, y_max+1]
+
+def float_to_binary_mask(mask: np.ndarray,  threshold: float = 0.5) -> np.ndarray:
+    '''Convert float mask from prediction into binary mask to create polygons'''
+    return (mask > threshold).astype(np.uint8)
 
 def recal_pixel_mean_std(n1:int, 
                          n2:int, 
@@ -84,12 +91,13 @@ def get_mean_std(data: np.ndarray) -> tuple:
         std = np.std(data, axis=(0,2,3))
         return mean, std
 
-def merge_coco(coco_fpths: tuple | list, output_path: str):
+def merge_coco(coco_fpths: tuple | list, output_path: str = None):
     """Merge multiple coco files into one coco file, update corresponding ids
     Args:
         coco_fpths: A tuple contains multiple coco file paths to merge. 
         output_path: A pathlike string for the path to save merged coco file
     """
+    coco_fpths = sorted([Path(coco) for coco in coco_fpths], key=lambda p: p.name)
     merged_coco = {
         "info":[],
         "images": [],
@@ -97,11 +105,12 @@ def merge_coco(coco_fpths: tuple | list, output_path: str):
         "categories": [],
         "licenses": []
     }
-    for file_path in coco_fpths:
+    for idx, file_path in enumerate(coco_fpths):
         with open(file_path, 'r') as f:
             coco = json.load(f)
         validate_coco(coco)
         print(f'{Fore.GREEN}Merging {file_path}')
+        coco['info']['dataset_id'] = idx+1
         # Check there are new licenses present in coco, optional, is okay if no licenses in coco file   
         if coco.get('licenses', False):
             license_id_offset = len(merged_coco['licenses'])
@@ -195,7 +204,15 @@ def merge_coco(coco_fpths: tuple | list, output_path: str):
             merged_coco['info'][0]=({"total_mean":total_mean.tolist(),
                                      "total_std":total_std.tolist(),
                                      'number_of_datasets':len(merged_coco['info'])-1})
-    with open(output_path, 'w') as f:
+    if output_path is None:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w') as temp_file:
+            json.dump(merged_coco, temp_file, indent=4)
+            temp_file_path = temp_file.name
+            print(f'{Fore.YELLOW}Output path is None, will export as tempfile')
+        coco = COCO(temp_file_path)
+        return coco
+    else:
+        with open(output_path, 'w') as f:
             json.dump(merged_coco, f, indent=4)
             print(f'{Fore.GREEN}Merged COCO file saved under {output_path}!')
         
@@ -203,13 +220,6 @@ def pack_h5_list(data: list):
     """pack list into numpy scalar data which can be storage into hdf5 dataset"""
     pickle_object = pickle.dumps(data)
     return np.void(pickle_object)
-
-def read_toml(config_path) -> dict:
-    """Read toml config file used by DLtreeseg"""
-    with open(config_path, 'rb') as f:
-        tmp = tomllib.load(f)
-    toml = SimpleNamespace_ext(**tmp)
-    return toml
 
 def to_pixelcoord(transform, window, polygon: Polygon) -> list :
     """ Convert geographic coords in polygon to local pixel-based coords by bound box.
@@ -237,7 +247,6 @@ def to_pixelcoord(transform, window, polygon: Polygon) -> list :
     pixelcoord_list = [point for coord in pixelcoord for point in coord]
     return pixelcoord_list
 
-# unpack numpy scalar data to list
 def unpack_h5_list(data: np.void):
     return pickle.loads(data.tobytes())
 
@@ -256,11 +265,6 @@ def window_to_dict(window: Window) -> dict:
 
 def windowdict_to_window(window_dict:dict)-> Window:
     return Window(window_dict['col_off'], window_dict['row_off'],window_dict['width'],window_dict['height'])
-
-def read_json(json_path: str):
-        with open(json_path, 'r') as f:
-            COCO = json.load(f)
-        return COCO
 
 def validate_coco(coco: dict):
     """ Validate COCO structure to ensure required fields are present. """
@@ -647,7 +651,8 @@ class COCO_parser:
             json.dump(self.COCO, f, indent=4)
 
 class SimpleNamespace_ext(SimpleNamespace):
-    """An extension of SimpleNamespace, make sure all levels of keys in dict are converted into namespace not
+    """ 
+    An extension of SimpleNamespace, make sure all levels of keys in dict are converted into namespace not
     only the first level by using SimpleNamespace_ext(**your_dict)
     """
     def __init__(self, **kwargs):
@@ -655,6 +660,7 @@ class SimpleNamespace_ext(SimpleNamespace):
             if isinstance(value, dict):
                 kwargs[key] = self._nested_dict(value)
         super().__init__(**kwargs)
+        Warning('This funciton is Deprecated')
 
     def _nested_dict(self, d:dict) -> SimpleNamespace:
         if not isinstance(d, dict):
@@ -674,3 +680,11 @@ class SimpleNamespace_ext(SimpleNamespace):
         else: 
             raise TypeError('Only able to append SimpleNamespace')
 
+class Suppressor:
+    def __enter__(self):
+        self.original_stdout = sys.stdout
+        sys.stdout = open(os.devnull, 'w')  # Redirect stdout to null
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self.original_stdout  # Restore stdout
