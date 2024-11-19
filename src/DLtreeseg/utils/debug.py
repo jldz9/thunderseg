@@ -14,7 +14,7 @@ def check_image_target(image, target, savepath=None):
     if not isinstance(image, np.ndarray):
         image = image.cpu().permute(1,2,0).numpy()
         image = (image - np.min(image))/(np.max(image) - np.min(image))
-    target = {k: v.cpu() for k, v in target.items()}
+    target = {k: v.cpu().numpy() for k, v in target.items()}
     plt.figure(figsize=(10,10))
     plt.imshow(image)
     ax = plt.gca()
@@ -27,6 +27,7 @@ def check_image_target(image, target, savepath=None):
         ax.add_patch(rect)
         plt.text(x_min, y_min, f'Label: {label}', color='white', fontsize=12, backgroundcolor='red')
         masked_image = np.ma.masked_where(mask == 0, mask)
+        masked_image = np.transpose(masked_image, (1,2,0))
         plt.imshow(masked_image, cmap='jet', alpha=0.5)
     plt.axis('off')
 
