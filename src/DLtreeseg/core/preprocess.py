@@ -191,6 +191,7 @@ class Tile:
             to_file(filename, tile_data, tile_profile, mode=mode)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
+        self._stack_tiles = self._stack_tiles[:,0:band, :,:] # Make sure if use BGR mode will export only frist 3 bands
         mean, std = get_mean_std(self._stack_tiles)
         self._report = {'file_name': self.fpth.as_posix(),
                         'output_path': self._output_path.as_posix(),
@@ -216,6 +217,9 @@ class Tile:
                         }
         if shp_path is not None and Path(shp_path).is_file():
             self.tile_shape(shp_path)
+            self._no_shp = False
+        else: 
+            self._no_shp = True
    
     def tile_shape(self, shp_path: str):
         """Use raster window defined by _get_window to tile input shapefiles.
@@ -275,19 +279,23 @@ class Tile:
                         date_captured = self._images['date_captured'],
                         window = [window_to_dict(w) for w in self._windows]
                         )
-        self._coco.add_annotations(id = self._annotations['id'],
-                             image_id = self._annotations['image_id'],
-                             category_id = self._annotations['category_id'],
-                             bbox = self._annotations['bbox'],
-                             area = self._annotations['area'],
-                             iscrowd = self._annotations['iscrowd'],
-                             segmentation = self._annotations['segmentation']
-                             )
+        if self._no_shp:
+            self._coco.add_annotations()
+        else:
+            self._coco.add_annotations(id = self._annotations['id'],
+                                image_id = self._annotations['image_id'],
+                                category_id = self._annotations['category_id'],
+                                bbox = self._annotations['bbox'],
+                                area = self._annotations['area'],
+                                iscrowd = self._annotations['iscrowd'],
+                                segmentation = self._annotations['segmentation'],
+                                bbox_mode='xywh'
+                                )
         if output_path is not None:
             self._coco_path = Path(output_path)
         else:
             self._coco_path = f'{self._output_path}/{self.fpth.stem}_coco.json'
-        self._coco.save_json(self._coco_path)
+        self._coco.save_coco(self._coco_path)
         print(f'COCO saved at {self._coco_path}')
         return self._coco_path
     
@@ -317,17 +325,17 @@ class Tile:
     def clear(self):
         for attr in vars(self): 
             setattr(self, attr, None)
-
-    def to_h5(self, save_path:str):
-        """
-        Save tiles into HDF5 dataset
-        """
-        save_h5(save_path=save_path,
-                data = self._stack_tiles,
-                attrs= self._report,
-                windows = pack_h5_list(self._windows),
-                profiles = pack_h5_list(self._profiles)
-                )
+    
+    @staticmethod
+    def to_file(path_to_file:str, data:np.ndarray, profile=None, mode:str='BGR'):
+        path_to_file = Path(path_to_file)
+        if mode.upper() == 'BGR':
+            with rio.open(path_to_file,'w', **profile) as dst:
+                for i in range(0,3):
+                    dst.write(data[i], i+1)
+        if mode.upper() == 'MS':
+            with rio.open(path_to_file, 'w', **profile) as dst:
+                dst.write(data)
 
 def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
     """
@@ -427,8 +435,8 @@ class TrainDataset(Dataset):
                 image, target = self._load_image_target(image_info, annotation_ids)
                 if self._transform is not None:
                     image, target= self._transform(image, target, train = True, 
-                                                   mean=self._coco.dataset['info']['pixel_mean'],
-                                                   std=self._coco.dataset['info']['pixel_std'])
+                                                   mean=self._coco.dataset['info'][0]['pixel_mean'],
+                                                   std=self._coco.dataset['info'][0]['pixel_std'])
                     return image, target
             else:
                 idx = (idx+1)% len(self._coco.imgs)
@@ -494,8 +502,8 @@ class PreditDataset(Dataset):
         
         if self._transform:
             image = self._transform(image, train=False, 
-                                    mean=self._coco_train.dataset['info'][0]['total_mean'],
-                                    std=self._coco_train.dataset['info'][0]['total_std'])
+                                    mean=self._train_coco.dataset['info'][0]['total_mean'],
+                                    std=self._train_coco.dataset['info'][0]['total_std'])
 
         return image
 
