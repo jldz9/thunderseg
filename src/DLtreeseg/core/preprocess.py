@@ -5,6 +5,8 @@
 Image preprocess module for DLtreeseg, include image IO, tilling
 """
 
+import os
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import sys
 import warnings
 from datetime import datetime, timezone
@@ -26,8 +28,8 @@ from shapely import box
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
-from DLtreeseg.core import save_h5, to_file
+from DLtreeseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
+
 
 
 
@@ -188,7 +190,8 @@ class Tile:
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            to_file(filename, tile_data, tile_profile, mode=mode)
+            self.to_file(filename, tile_data, tile_profile, mode=mode)
+            self.to_png(tile_data, Path(filename).with_suffix('.png').as_posix())
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         self._stack_tiles = self._stack_tiles[:,0:band, :,:] # Make sure if use BGR mode will export only frist 3 bands
@@ -326,8 +329,7 @@ class Tile:
         for attr in vars(self): 
             setattr(self, attr, None)
     
-    @staticmethod
-    def to_file(path_to_file:str, data:np.ndarray, profile=None, mode:str='BGR'):
+    def to_file(self, path_to_file:str, data:np.ndarray, profile=None, mode:str='BGR'):
         path_to_file = Path(path_to_file)
         if mode.upper() == 'BGR':
             with rio.open(path_to_file,'w', **profile) as dst:
@@ -336,6 +338,22 @@ class Tile:
         if mode.upper() == 'MS':
             with rio.open(path_to_file, 'w', **profile) as dst:
                 dst.write(data)
+
+    def to_png(self, data: np.ndarray, path_to_file:str):
+        band1 = data[0] # B
+        band2 = data[1] # G
+        band3 = data[2] # R
+        stack = np.stack([band1, band2, band3], axis=0)
+        stack = np.transpose(stack, (1,2,0))
+        min_val = np.min(stack)  # Minimum value in the array
+        max_val = np.max(stack)
+        if max_val == min_val:
+            normalized_array = np.zeros_like(stack, dtype=np.float32)  # or np.ones_like(array, dtype=np.float32)
+        else:
+            normalized_array = (stack - min_val) / (max_val - min_val) * 255
+        
+        array_rgb = cv2.cvtColor(normalized_array, cv2.COLOR_BGR2RGB)
+        cv2.imwrite(path_to_file, array_rgb)
 
 def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
     """
@@ -414,9 +432,8 @@ class TrainDataset(Dataset):
     def __init__(self, coco:str, transform=get_transform):
         """
         Args:
-            coco : The single json file path exported from Tile.to_COCO represent the image dataset
-            img_dir : Not required, normally obtained from COCO file, will find image under it if specified
-            transform : transform fron torchvision.transforms
+            coco : The merged json file path exported from merged_coco represent the image dataset
+            transform : transform method use for image agumentation
         """
         self._coco = COCO(coco)
         # Get parent path of the first availiable image in the dataset
@@ -429,14 +446,15 @@ class TrainDataset(Dataset):
         attempts = 0
         max_attempts = len(self._coco.imgs)
         while attempts< max_attempts:
+            # This make sure filter out empty annotations
             image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
             annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
             if len(annotation_ids) > 0:
                 image, target = self._load_image_target(image_info, annotation_ids)
                 if self._transform is not None:
                     image, target= self._transform(image, target, train = True, 
-                                                   mean=self._coco.dataset['info'][0]['pixel_mean'],
-                                                   std=self._coco.dataset['info'][0]['pixel_std'])
+                                                   mean=self._coco.dataset['summary']['total_mean'],
+                                                   std=self._coco.dataset['summary']['total_std'])
                     return image, target
             else:
                 idx = (idx+1)% len(self._coco.imgs)
@@ -483,10 +501,9 @@ class PreditDataset(Dataset):
     def __init__(self, coco_train:str, coco_predict:str, transform=get_transform):
         """ 
         Args:
-            coco_train
-            coco_predict : The single json file path exported from Tile.to_COCO represent the predict image dataset
-            img_dir : Not required, normally obtained from COCO file, will find image under it if specified
-            transform : transform fron torchvision.transforms
+            coco_train: The merged train coco json file, we need to use the mean and std from the train dataset
+            coco_predict : The merged predict coco json file path exported from merge_coco represent the predict image dataset
+            transform : transform use to transfrom the dataset
         """
         self._train_coco = COCO(coco_train)
         self._coco = COCO(coco_predict)
