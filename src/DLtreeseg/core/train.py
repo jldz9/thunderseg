@@ -46,7 +46,7 @@ class MaskRCNN_RGB(L.LightningModule):
         # Replace the mask predictor with a new one
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
         self.learning_rate = learning_rate
-        
+        self.save_hyperparameters()
         
     def forward(self, images, targets=None):
         if self.training:
@@ -83,7 +83,6 @@ class MaskRCNN_RGB(L.LightningModule):
                 binary_mask = (prediction['masks'][j, 0] >mask_threshold).cpu().numpy().astype(np.uint8)
                 if np.sum(binary_mask) == 0:
                     continue
-
                 rle_mask = maskUtils.encode(np.asfortranarray(binary_mask))
                 self.val_results_mask.append({
                     'image_id': image_id,
@@ -166,7 +165,7 @@ class MaskRCNN_RGB(L.LightningModule):
             self.val_results_mask.clear()
 
     def configure_optimizers(self):
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005)
+        optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005) # TODO make this flexiable
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
         return [optimizer], [scheduler]
     
