@@ -407,8 +407,7 @@ def merge_coco(coco_fpths: tuple | list, output_path: str = None):
                 image_append_list.append(new_group)
             coco['images'] = [item for sublist in image_append_list for item in sublist]
         else:
-            print(f'{Fore.YELLOW}no license section found in {file_path}, will ignore license section')
-            
+            print(f'{Fore.YELLOW}no license section found in {file_path}, will ignore license section') 
         # Check if there are new categories present in coco
         category_id_offset = len(merged_coco["categories"])
         count = 0
@@ -432,7 +431,6 @@ def merge_coco(coco_fpths: tuple | list, output_path: str = None):
             merged_coco['annotations'] = []
         else:
             ## This method group the annotation section (one list of dicts) into lists of dicts depends on category_id
-        
             split_data = defaultdict(list)
             list(map(lambda item: split_data[item['category_id']].append(item), coco['annotations']))
             anno_group = split_data.values()
@@ -468,7 +466,6 @@ def merge_coco(coco_fpths: tuple | list, output_path: str = None):
                                         "total_std":coco['info']['pixel_std'], 
                                         'number_of_datasets':1}
             merged_coco['info'].extend([coco['info']])
-
         else: 
             n1 = len(merged_coco['images'])
             n2 = len(coco['images'])
@@ -479,9 +476,10 @@ def merge_coco(coco_fpths: tuple | list, output_path: str = None):
             std2 = np.array(coco['info']['pixel_std'])
             total_mean, total_std = recal_pixel_mean_std(n1, n2, mean1, std1, mean2, std2)
             merged_coco['info'].extend([coco['info']])
-            merged_coco['Summary']=({"total_mean":total_mean.tolist(),
+            merged_coco['summary']={"total_mean":total_mean.tolist(),
                                      "total_std":total_std.tolist(),
-                                     'number_of_datasets':len(merged_coco['info'])})
+                                     'number_of_datasets':len(merged_coco['info'])}
+            
     if output_path is None:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode='w') as temp_file:
             json.dump(merged_coco, temp_file, indent=4)
