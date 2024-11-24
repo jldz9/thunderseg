@@ -6,6 +6,7 @@ from torchvision.models.detection import maskrcnn_resnet50_fpn_v2
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 import torch
+torch.set_float32_matmul_precision('high')
 import torchvision
 import torch.utils.data
 from torchvision.models.detection import MaskRCNN
