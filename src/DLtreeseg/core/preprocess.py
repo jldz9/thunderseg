@@ -29,6 +29,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 
 from DLtreeseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
+#from DLtreeseg.utils import check_image_target
 
 
 
@@ -365,16 +366,16 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
 
     three_channel_image_only_transform = A.Compose(
         [A.SomeOf([ 
-        A.PlanckianJitter(),
-        A.RandomBrightnessContrast(brightness_limit=(-0.5, 0.5), contrast_limit=(-0.5, 0.5)),
+        #A.PlanckianJitter(),
+        A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1)),
         A.RandomToneCurve(),
         ], n=1, p=0.5)
         ])
     
     image_only_transform = A.Compose([A.SomeOf([
-        #A.Downscale(scale_range=(0.5, 1)),
-        A.GaussNoise(noise_scale_factor=0.5),
-        A.Sharpen(),
+        A.Downscale(scale_range=(0.5, 1)),
+        #A.GaussNoise(noise_scale_factor=0.5),
+        #A.Sharpen(),
         A.AdvancedBlur(),
         A.Defocus(),
         A.MotionBlur(allow_shifted=False)
@@ -383,13 +384,12 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
 
     image_and_target_transform = A.Compose([A.SomeOf([
         A.PixelDropout(),
-        
         A.HorizontalFlip(),
         A.RandomRotate90(),
     ], n=2, p=0.5),
     A.RandomCrop(height=512, width=512),
     ToTensorV2()])
-    if train is True:
+    if train:
         if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
             temp = three_channel_image_only_transform(image=image)
             image = temp['image']
@@ -410,6 +410,7 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
             target['bbox_mode'] = ['xyxy']* len(target['area'])
             target['iscrowd'] = [int(j) for i, j in enumerate(target['iscrowd'].numpy()) if i not in list(drop_index)]
             target['labels'] = torch.tensor([int(j) for i, j in enumerate(target['labels'].numpy()) if i not in list(drop_index)])
+            #check_image_target(image, target, f'/workspaces/DLtreeseg/test/image_debug/debug{target["image_id"]}.png')
             return image, target
         else:
             target['area'] = torch.zeros((0,),dtype=torch.int64)
@@ -421,7 +422,7 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
             target['iscrowd'] = []
             return image, target
         
-    elif train is False:
+    elif not train:
         predict_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
                                        ToTensorV2()])
         temp = predict_transform(image=image)
@@ -429,13 +430,16 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
         return image
     
 class TrainDataset(Dataset):
-    def __init__(self, coco:str, transform=get_transform):
+    def __init__(self, coco:str | COCO, transform=get_transform):
         """
         Args:
             coco : The merged json file path exported from merged_coco represent the image dataset
             transform : transform method use for image agumentation
         """
-        self._coco = COCO(coco)
+        if isinstance(coco, COCO):
+            self._coco = coco
+        else:
+            self._coco = COCO(coco)
         # Get parent path of the first availiable image in the dataset
         self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
         self._transform = transform
