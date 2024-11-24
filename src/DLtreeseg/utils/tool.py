@@ -183,6 +183,8 @@ class Config(SimpleNamespace):
         Dynamically create and return a nested Config object if it doesn't exist.
         """
         if name not in self.__dict__:
+            if name.startswith('_'):
+                raise AttributeError(name)
             # Dynamically create a new Config object for missing attributes
             self.__dict__[name] = Config()
         return self.__dict__[name]
