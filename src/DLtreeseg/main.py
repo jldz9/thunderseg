@@ -5,12 +5,14 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import torch
+import lightning as L
+torch.set_float32_matmul_precision('high')
 from colorama import Fore, init
 init(autoreset=True)
-from lightning import Trainer
+
 from lightning.pytorch.loggers import TensorBoardLogger
 from pycocotools.coco import COCO
-
 from DLtreeseg.core import Tile, LoadDataModule, get_transform, MaskRCNN_RGB
 from DLtreeseg.utils import merge_coco, Config, create_project_structure
 from DLtreeseg._version import __version__
@@ -28,6 +30,18 @@ def create_parser():
     train = subparser.add_parser('train', help='Train models')
     train.add_argument('-c', '--config', metavar='PATH', help='Path to config')
     return parser, preprocess, train
+
+def find_config(config):
+    cfg_path = Path(config)
+    if not cfg_path.is_file():
+        search_cfg = list(cfg_path.glob('*.toml'))
+        if len(search_cfg) == 0:
+            raise FileNotFoundError(f'Cannot find any config file under {config}')
+        if len(search_cfg) > 1:
+            raise ValueError(f'Duplicate config files found under {config}')
+        return search_cfg[0].resolve()
+    else:
+        return cfg_path.resolve()
 
 def preprocess_step(cfg):
     """Step to prepare everything for project loop
@@ -53,7 +67,7 @@ def preprocess_step(cfg):
     predict_coco_list = []
     if len(predict_rasters) <1: 
         print(f"{Fore.YELLOW}No raster found under {cfg.IO.PREDICT_RASTER_DIR}, will skip prediction step")
-        cfg.PREDICT.RUN_PREDICT = False
+        cfg.STATUS.HAS_PREDICT_DATASET = False
     else:
         for p in predict_rasters:
             predict_r = Tile(fpth=p, output_path = cfg.IO.PREDICT,buffer_size=cfg.PREPROCESS.BUFFER_SIZE, tile_size=cfg.PREPROCESS.TILE_SIZE)
@@ -61,14 +75,15 @@ def preprocess_step(cfg):
             coco_path = predict_r.to_COCO(cfg.IO.TEMP + f'{p.stem}_coco.json')
             predict_coco_list.append(coco_path)
         merge_coco(predict_coco_list, cfg.IO.ANNOTATIONS+'/predict_coco.json')
+    return cfg
 
-def train_step(cfg, customize_transform=None):
+def train_step(cfg, customize_transform=None): 
     coco_train = COCO(cfg.IO.ANNOTATIONS+'/train_coco.json')
     if Path(cfg.IO.ANNOTATIONS+'/predict_coco.json').is_file():
         coco_predict = COCO(cfg.IO.ANNOTATIONS+'/predict_coco.json')
     else: 
         coco_predict = None
-    if cfg.TRAIN.DATAMODULE.DATAMODULE == 'default':
+    if cfg.TRAIN.DATAMODULE.TRANSOFRM == 'default':
         transform = get_transform
     else: 
         transform = customize_transform
@@ -79,13 +94,15 @@ def train_step(cfg, customize_transform=None):
                                 )
     logger = TensorBoardLogger(save_dir=cfg.IO.RESULT+'/logs', name='MyTrain')
     if cfg.TRAIN.MODEL == 'maskrcnn_rgb':
-        model = maskrcnn_rgb_step(cfg.TRAIN.MASKRCNNRGB.NUM_CLASSES, 
-                                  cfg.TRAIN.MASKRCNNRGB.LEARNING_RATE)
-        trainer = Trainer(logger=logger, 
-                          accelerator=cfg.TRAIN.ACCELERATOR,
-                          devices=cfg.TRAIN.DEVICES,
-                          max_epochs=cfg.TRAIN.MAX_EPOCHS)
-        trainer.fit(model, datamodule)
+        model = maskrcnn_rgb_step(cfg.TRAIN.MASKRCNNRGB.NUM_CLASSES, float(cfg.TRAIN.MASKRCNNRGB.LEARNING_RATE))
+
+    trainer = L.Trainer(logger=logger, 
+                        accelerator=cfg.TRAIN.ACCELERATOR,
+                        devices=cfg.TRAIN.DEVICES,
+                        max_epochs=cfg.TRAIN.MAX_EPOCHS)
+    trainer.fit(model, datamodule)
+    cfg.STATUS.TRAINED = True
+    return cfg
 
 def maskrcnn_rgb_step(num_classes, learning_rate):
     model = MaskRCNN_RGB(num_classes=num_classes, learning_rate=learning_rate)
@@ -100,17 +117,25 @@ def main(iargs=None):
         sys.exit(1)
     if inps.init:
         shutil.copy(_default_cfg_path, inps.init)
-        print(f'{Fore.GREEN} Config copied under {Path(inps.init).resolve()}')
+        print(f'{Fore.GREEN}Config copied under {Path(inps.init).resolve()}')
     if inps.step == 'preprocess':   
         if inps.config is None:
             preprocess_parser.print_help()
             sys.exit(1)
-        cfg = Config(config_path=Path(inps.config).resolve())
+        cfg_path = find_config(inps.config)
+        cfg = Config(config_path=cfg_path)
         directories = create_project_structure(cfg.IO.WORKDIR)
         cfg.IO.update(directories)
-        cfg.to_file(inps.config)
-        preprocess_step(cfg)
-    if inps.step == 'train':
-        train_cfg = []
+        cfg = preprocess_step(cfg)
+        cfg.to_file(cfg_path)
+    if inps.step == 'train': #TODO add support of customize_transform
+        if inps.config is None:
+            train_parser.print_help()
+            sys.exit(1)
+        cfg_path = find_config(inps.config)
+        cfg = Config(config_path=cfg_path)
+        cfg = train_step(cfg)
+        cfg.to_file(cfg_path)
+
 if __name__ == '__main__':
     main(sys.argv[1:])
