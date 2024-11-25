@@ -1,6 +1,6 @@
 from pathlib import Path
 import sys
-sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
+sys.path.append('/home/vscode/remotehome/DL_packages/thunderseg/src')
 from torchvision.transforms import v2 as T
 from thunderseg.core import MaskRCNN_RGB, LoadDataModule, get_transform, train_model
 import torch
@@ -48,7 +48,7 @@ trainer = L.Trainer(logger=logger, accelerator='gpu', devices=1, max_epochs=100)
 trainer.fit(model, dataset)
 '''
 fpath = Path('/home/vscode/remotehome/DL_drake/output/')
-checkpoint = '/workspaces/DLtreeseg/lightning_logs/version_2/checkpoints/epoch=9-step=190.ckpt'
+checkpoint = '/workspaces/thunderseg/lightning_logs/version_2/checkpoints/epoch=9-step=190.ckpt'
 coco_path = '/home/vscode/remotehome/DL_drake/demo.json'
 predict = '/home/vscode/remotehome/DL_drake/predict.pkl'
 '''

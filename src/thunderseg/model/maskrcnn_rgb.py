@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Thunderseg built in instance segementation Maskrcnn_rgb module
+"""
 import copy
 import os
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
@@ -78,7 +83,6 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
             target['bbox_mode'] = ['xyxy']* len(target['area'])
             target['iscrowd'] = [int(j) for i, j in enumerate(target['iscrowd'].numpy()) if i not in list(drop_index)]
             target['labels'] = torch.tensor([int(j) for i, j in enumerate(target['labels'].numpy()) if i not in list(drop_index)])
-            #check_image_target(image, target, f'/workspaces/DLtreeseg/test/image_debug/debug{target["image_id"]}.png')
             return image, target
         else:
             target['area'] = torch.zeros((0,),dtype=torch.int64)

@@ -8,7 +8,6 @@ from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader, random_split
 import lightning as L
 from lightning.pytorch.loggers import TensorBoardLogger
-from torchvision.models.detection.mask_rcnn import 
 
 class Encoder(nn.Module):
     def __init__(self):
@@ -79,9 +78,9 @@ train_set, valid_set = random_split(train_set, [train_set_size, valid_set_size],
 train_loader = DataLoader(train_set, num_workers=16)
 valid_loader = DataLoader(valid_set, num_workers=16)
 #autoencoder = LitAutoEncoder(Encoder(), Decoder())
-model = LitAutoEncoder.load_from_checkpoint("/workspaces/DLtreeseg/lightning_logs/version_5/checkpoints/epoch=2-step=144000.ckpt")
+model = LitAutoEncoder.load_from_checkpoint("/workspaces/thunderseg/lightning_logs/version_5/checkpoints/epoch=2-step=144000.ckpt")
 
 # train model
 logger = TensorBoardLogger("tb_logs", name="my_model")
 trainer = L.Trainer(accelerator='gpu', devices=1)
-trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path="/workspaces/DLtreeseg/lightning_logs/version_5/checkpoints/epoch=2-step=144000.ckpt")
+trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path="/workspaces/thunderseg/lightning_logs/version_5/checkpoints/epoch=2-step=144000.ckpt")

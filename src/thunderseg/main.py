@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Main entry point of thunderseg
+"""
 import argparse
 import sys
 import shutil
@@ -6,7 +11,6 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 import torch
-import lightning as L
 torch.set_float32_matmul_precision('high')
 from colorama import Fore, init
 init(autoreset=True)
@@ -18,10 +22,10 @@ from thunderseg.model import maskrcnn_rgb
 from thunderseg._version import __version__
 
 def create_parser():
-    synopsis = 'This is a python interface for DLtreeseg program'
-    name = 'DLtreeseg'
+    synopsis = 'This is a python interface for thunderseg program'
+    name = 'thunderseg'
     parser = argparse.ArgumentParser(name, description=synopsis, add_help=False)
-    parser.add_argument("-v", "--version", action='version', version=f'DLtreeseg {__version__}')
+    parser.add_argument("-v", "--version", action='version', version=f'thunderseg {__version__}')
     parser.add_argument('-c', '--config', metavar='PATH', help='Path to config for automate process')
     parser.add_argument('--init', metavar='PATH', help='Initiliza the working dir')
     subparser = parser.add_subparsers(dest='step')
@@ -119,7 +123,6 @@ def predict_step(cfg):
         postprocess.mask_rcnn_postprocess()
         return cfg
         
-
 def main(iargs=None):
     _default_cfg_path = Path(__file__).parent / 'utils/config.toml'
     parser, preprocess_parser, train_parser, predict_parser = create_parser()
@@ -164,7 +167,6 @@ def main(iargs=None):
             cfg.IO.CHECKPOINT = latest_ckpt.resolve().as_posix()
         cfg = predict_step(cfg)
         cfg.to_file(cfg_path)
-
 
 if __name__ == '__main__':
     main(sys.argv[1:])

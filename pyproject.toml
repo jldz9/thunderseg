@@ -2,11 +2,11 @@
 requires = ['setuptools>=61.0']
 build-backend = 'setuptools.build_meta'
 [project]
-name = "DLtreeseg"
+name = "thunderseg"
 dynamic= ["version"]
 authors = [{name="Jiawei Li", email="Jiaweiliwork@outlook.com"}]
 description = "A deep learning program for tree segmentation"
 readme = 'Readme.md'
 dependencies = []
 [tool.setuptools.dynamic]
-version = {attr = "DLtreeseg._version.__version__"}
+version = {attr = "thunderseg._version.__version__"}

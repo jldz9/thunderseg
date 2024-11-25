@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Debug module for thunderseg package
+"""
 import matplotlib.pyplot as plt
 import torch
-import torchvision.transforms as T
 import numpy as np
 from matplotlib.patches import Rectangle
-
 
 def check_image_target(image, target=None, savepath=None):
     """ Plot a single image with target to check the quality of transform

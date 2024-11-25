@@ -1,7 +1,7 @@
 import sys
 sys.path.append('/home/jldz9/DL/DL_packages/detectree2')
 sys.path.append('/home/jldz9/DL/DL_packages/detectree2/detectree2')
-sys.path.append('/home/jldz9/DL/DL_packages/DLtreeseg/src')
+sys.path.append('/home/jldz9/DL/DL_packages/thunderseg/src')
 from pathlib import Path
 import glob
 import rasterio as rio

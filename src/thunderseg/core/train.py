@@ -1,10 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Train module for thunderseg
+"""
 import torch
 import torch.utils.data
 from lightning import LightningModule, LightningDataModule
 from lightning import Trainer
 from lightning.pytorch.loggers import TensorBoardLogger
 torch.set_float32_matmul_precision('high')
-
 
 class Train():
     def __init__(self, model: LightningModule, 

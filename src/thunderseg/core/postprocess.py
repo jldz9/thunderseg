@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from pathlib import Path
-from unittest.mock import mock_open, patch
 
 import geopandas as gpd
 import pandas as pd
@@ -12,10 +11,10 @@ from rasterio.windows import transform as window_transform
 from rasterio.features import shapes
 from shapely.geometry import shape, box
 
-from thunderseg.utils import float_to_binary_mask, merge_coco, Suppressor, windowdict_to_window
+from thunderseg.utils import float_to_binary_mask, windowdict_to_window
 from pycocotools.coco import COCO
 """
-Module include post-process functions for DLtreeseg, including image mosaic
+Module include post-process functions for thunderseg, including image mosaic
 """
 class Postprocess:
     """

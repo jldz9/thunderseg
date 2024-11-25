@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Tools for DLtreeseg package
+Tools for thunderseg package
 """
 import json
 import os

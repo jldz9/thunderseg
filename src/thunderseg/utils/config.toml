@@ -1,4 +1,4 @@
-# This is the config file for DLtreeseg program. Program use metric system
+# This is the config file for thunderseg program. Program use metric system
 [IO]
 WORKDIR = "/home/vscode/remotehome/DL_drake/output"
 TRAIN_RASTER_DIR = "/home/vscode/remotehome/DL_drake/Drake/train"

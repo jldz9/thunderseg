@@ -1,6 +1,6 @@
 import sys
 import time
-sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
+sys.path.append('/home/vscode/remotehome/DL_packages/thunderseg/src')
 
 from thunderseg import main
 main.main(['--init', '/home/vscode/remotehome/DL_drake/output'])

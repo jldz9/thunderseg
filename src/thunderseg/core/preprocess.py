@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Image preprocess module for DLtreeseg, include image IO, tilling
+Image preprocess module for thunderseg, include image IO, tilling
 """
 import os
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"

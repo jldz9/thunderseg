@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Thunderseg built in instance segementation Maskrcnn_ms module
+"""
 import copy
 import os
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
@@ -21,7 +26,6 @@ from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as maskUtils
 
 from thunderseg.utils import  bbox_from_mask
-#from DLtreeseg.utils import check_image_target
 
 class MaskRCNN_MS(L.LightningModule):
     def __init__(self, model, num_classes: int = 2, learning_rate: float = 1e-3):

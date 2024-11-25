@@ -1,14 +1,14 @@
 
 from pathlib import Path
 import sys
-sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
+sys.path.append('/home/vscode/remotehome/DL_packages/thunderseg/src')
 import torch
 import numpy as np
 import lightning as L
 from thunderseg.core import Tile, create_project_structure, MaskRCNNModule, LoadDataModule
 
 """
-Image preprocess module for DLtreeseg, include image IO, tilling
+Image preprocess module for thunderseg, include image IO, tilling
 """
 import io
 import json

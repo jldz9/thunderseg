@@ -168,7 +168,7 @@ print(predictions[0])
 
 import sys
 import os
-sys.path.append(os.path.abspath("/workspaces/DLtreeseg"))
+sys.path.append(os.path.abspath("/workspaces/thunderseg"))
 
 from engine import train_one_epoch, evaluate
 import utils
