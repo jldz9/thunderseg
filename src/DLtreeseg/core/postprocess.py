@@ -5,6 +5,8 @@ from unittest.mock import mock_open, patch
 
 import geopandas as gpd
 import pandas as pd
+from colorama import Fore, init
+init(autoreset=True)
 from rasterio.transform import Affine
 from rasterio.windows import transform as window_transform
 from rasterio.features import shapes
@@ -20,10 +22,13 @@ class Postprocess:
     Handle georeference for predictions
     """
     # TODO: Add functions that merge tiles back into whole geo-referenced raster  
-    def __init__(self, predict_coco_path, predict_result, output_path, predict_result_parser = None):
-        self.coco_path = predict_coco_path
-        self.coco = COCO(predict_coco_path)
-        self.predict = predict_result
+    def __init__(self, predict_coco, predict_result, output_path, predict_result_parser = None):
+        """The predict_coco should be combined from export from merge_coco function under utils.tool"""  #TODO add more compatibility to regular COCO format in the furture
+        if isinstance(predict_coco, COCO):
+            self.coco = predict_coco
+        else:
+            self.coco = COCO(predict_coco)
+        self.predict = [p for batch in predict_result for p in batch]
         self.output = output_path
         self.predict_parser = predict_result_parser
 
@@ -33,11 +38,7 @@ class Postprocess:
             self.predict_parser = 'mask_rcnn'
 
     def mask_rcnn_postprocess(self):
-        if isinstance(self.coco.dataset['info'], dict):
-            print(self.coco_path)
-            with Suppressor():
-                self.coco = merge_coco((self.coco_path,))
-        for info in self.coco.dataset['info'][1:]:
+        for info in self.coco.dataset['info']:
             affine = Affine(*info['affine'])
             img_range = info['image_ids'].split('-')
             imgs = self.coco.loadImgs(range(int(img_range[0]),int(img_range[1])+1))
@@ -54,9 +55,7 @@ class Postprocess:
                 scores = [float(score.to('cpu').numpy()) for score in predict['scores']]
                 shapes_generator = [shapes(binary_mask, transform=window_affine) for binary_mask in masks]
                 polygons = []
-                
                 bboxes = []
-                
                 for i, shape_generator in enumerate(shapes_generator):
                     for geom, value in shape_generator:
                         if value == 1: 
@@ -82,7 +81,8 @@ class Postprocess:
             bbox_gdf.set_crs(f'EPSG:{info["crs"]}', inplace=True)
             bbox_gdf.drop_duplicates(subset='bounding_box', inplace=True)
             bbox_gdf.to_file(f'{self.output}/{Path(info["file_name"]).stem + "bounding_box.gpkg"}', layer='bounding_box', driver='GPKG')
-
+            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "bounding_box.gpkg"}')
+            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "polygon.gpkg"}')
 
     
                 
