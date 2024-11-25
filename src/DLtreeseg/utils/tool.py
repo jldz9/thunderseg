@@ -465,8 +465,8 @@ def merge_coco(coco_fpths: tuple | list, output_path: str = None):
         # Add info in merged_coco['info'] to be add capability to split datasets
         if len(merged_coco['info']) == 0:
             merged_coco['summary'] = {"total_mean":coco['info']['pixel_mean'],
-                                        "total_std":coco['info']['pixel_std'], 
-                                        'number_of_datasets':1}
+                                      "total_std":coco['info']['pixel_std'], 
+                                      "number_of_datasets":1}
             merged_coco['info'].extend([coco['info']])
         else: 
             n1 = len(merged_coco['images'])
