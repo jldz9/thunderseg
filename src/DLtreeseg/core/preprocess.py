@@ -4,34 +4,23 @@
 """
 Image preprocess module for DLtreeseg, include image IO, tilling
 """
-
 import os
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import sys
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 import cv2
 import geopandas as gpd
-import lightning as L
 import numpy as np
-from pycocotools.coco import COCO
 import rasterio as rio
 from rasterio.io import DatasetReader, MemoryFile
 from rasterio.windows import Window
 from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
-import torch
-from torch.utils.data import Dataset, DataLoader, random_split
 
-from DLtreeseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable, bbox_from_mask
-#from DLtreeseg.utils import check_image_target
-
-
+from DLtreeseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
 
 
 class Tile: 
@@ -44,7 +33,7 @@ class Tile:
                  output_path: str = '.',
                  tile_size : int = 236,
                  buffer_size : int = 10,
-                 debug = False
+                 tile_mode = 'meter',
                  ):
         """ Initializes parameters
         Args:
@@ -52,6 +41,7 @@ class Tile:
             output_path: Output file path, default is current directory.
             tile_size: Tile size, all tiles will be cut into squares. Unit: meter
             buffer_size: Buffer size around tiles. Unit:meter
+            tile_mode: 'meter' or 'pixel' #TODO add more unit support in the furture
             debug: Switch to turn on debug
         """
         self.fpth = Path(fpth).absolute()
@@ -76,9 +66,7 @@ class Tile:
                              'area':[],
                              'iscrowd':[],
                              'segmentation':[]} 
-        
-        if debug is True:
-            print('debug')
+        self.tile_mode = tile_mode
 
     def _get_window(self):
         """Make rasterio windows for raster tiles, pad original dataset to makesure all tiles size looks the same.
@@ -90,10 +78,16 @@ class Tile:
         x = profile['width']
         transform = oridataset.profile['transform']
         # Convert meter tile size to pixel tile size
-        tile_size_pixel_x = int(np.ceil(self._tile_size / oridataset.res[0]))
-        tile_size_pixel_y = int(np.ceil(self._tile_size / oridataset.res[1]))
-        buffer_size_pixel_x = int(np.ceil(self._buffer_size / oridataset.res[0]))
-        buffer_size_pixel_y = int(np.ceil(self._buffer_size / oridataset.res[1]))
+        if self.tile_mode == 'meter':
+            tile_size_pixel_x = int(np.ceil(self._tile_size / oridataset.res[0]))
+            tile_size_pixel_y = int(np.ceil(self._tile_size / oridataset.res[1]))
+            buffer_size_pixel_x = int(np.ceil(self._buffer_size / oridataset.res[0]))
+            buffer_size_pixel_y = int(np.ceil(self._buffer_size / oridataset.res[1]))
+        elif self.tile_mode == 'pixel':
+            tile_size_pixel_x = self._tile_size
+            tile_size_pixel_y = self._tile_size
+            buffer_size_pixel_x = self._buffer_size
+            buffer_size_pixel_y = self._buffer_size
         # Calculate number of tiles along height and width with buffer.
         n_tiles_x = int(np.ceil((x + buffer_size_pixel_x) / (buffer_size_pixel_x + tile_size_pixel_x)))
         n_tiles_y = int(np.ceil((y + buffer_size_pixel_y) / (buffer_size_pixel_y + tile_size_pixel_y)))
@@ -356,236 +350,3 @@ class Tile:
         array_rgb = cv2.cvtColor(normalized_array, cv2.COLOR_BGR2RGB)
         cv2.imwrite(path_to_file, array_rgb)
 
-def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
-    """
-    Apply transform to both image and target using Albumentations, 
-    Args:
-        image: should be a numpy array with shape of (Height,Width,Channel)
-        target: should be a dict contains bbox, mask, 
-    """
-
-    three_channel_image_only_transform = A.Compose(
-        [A.SomeOf([ 
-        #A.PlanckianJitter(),
-        A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1)),
-        A.RandomToneCurve(),
-        ], n=1, p=0.5)
-        ])
-    
-    image_only_transform = A.Compose([A.SomeOf([
-        A.Downscale(scale_range=(0.5, 1)),
-        #A.GaussNoise(noise_scale_factor=0.5),
-        #A.Sharpen(),
-        A.AdvancedBlur(),
-        A.Defocus(),
-        A.MotionBlur(allow_shifted=False)
-    ], n=2, p=0.5),
-    A.Normalize(mean=mean, std=std, max_pixel_value=1)])
-
-    image_and_target_transform = A.Compose([A.SomeOf([
-        A.PixelDropout(),
-        A.HorizontalFlip(),
-        A.RandomRotate90(),
-    ], n=2, p=0.5),
-    A.RandomCrop(height=512, width=512),
-    ToTensorV2()])
-    if train:
-        if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
-            temp = three_channel_image_only_transform(image=image)
-            image = temp['image']
-        temp = image_only_transform(image=image)
-        image = temp['image']
-        temp = image_and_target_transform(image=image, 
-                                        masks=target['masks']
-                                        )
-        image = temp['image']
-        target['area'] = torch.tensor([int(np.sum(mask.numpy())) for mask in temp['masks']])
-        drop_index = np.where(target['area'].numpy()<10)[0]
-        target['area'] = [j for i, j in enumerate(target['area']) if i not in list(drop_index)]
-        if len(target['area']) >1:
-            target['area'] = torch.tensor(target['area'])
-            target['annotation_id'] = [j for i, j in enumerate(target['annotation_id']) if i not in list(drop_index)]
-            target['masks'] = torch.stack([j for i, j in enumerate(temp['masks']) if i not in list(drop_index)])
-            target['boxes'] = torch.tensor([bbox_from_mask(mask.numpy()) for mask in target['masks']])
-            target['bbox_mode'] = ['xyxy']* len(target['area'])
-            target['iscrowd'] = [int(j) for i, j in enumerate(target['iscrowd'].numpy()) if i not in list(drop_index)]
-            target['labels'] = torch.tensor([int(j) for i, j in enumerate(target['labels'].numpy()) if i not in list(drop_index)])
-            #check_image_target(image, target, f'/workspaces/DLtreeseg/test/image_debug/debug{target["image_id"]}.png')
-            return image, target
-        else:
-            target['area'] = torch.zeros((0,),dtype=torch.int64)
-            target['annotation_id'] = []
-            target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-            target['labels'] = torch.zeros((0,), dtype=torch.int64)
-            target['masks'] = torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8)
-            target['bbox_mode'] = ['xyxy']
-            target['iscrowd'] = []
-            return image, target
-        
-    elif not train:
-        predict_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
-                                       ToTensorV2()])
-        temp = predict_transform(image=image)
-        image = temp['image']
-        return image
-    
-class TrainDataset(Dataset):
-    def __init__(self, coco:str | COCO, transform=get_transform):
-        """
-        Args:
-            coco : The merged json file path exported from merged_coco represent the image dataset
-            transform : transform method use for image agumentation
-        """
-        if isinstance(coco, COCO):
-            self._coco = coco
-        else:
-            self._coco = COCO(coco)
-        # Get parent path of the first availiable image in the dataset
-        self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
-        self._transform = transform
-    def __len__(self):
-        return len(self._coco.imgs)
-
-    def __getitem__(self, idx):
-        attempts = 0
-        max_attempts = len(self._coco.imgs)
-        while attempts< max_attempts:
-            # This make sure filter out empty annotations
-            image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
-            annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
-            if len(annotation_ids) > 0:
-                image, target = self._load_image_target(image_info, annotation_ids)
-                if self._transform is not None:
-                    image, target= self._transform(image, target, train = True, 
-                                                   mean=self._coco.dataset['summary']['total_mean'],
-                                                   std=self._coco.dataset['summary']['total_std'])
-                    return image, target
-            else:
-                idx = (idx+1)% len(self._coco.imgs)
-                attempts += 1
-
-    def _load_image_target(self, image_info, annotation_ids):
-        with rio.open(image_info['file_name']) as f:
-            image = f.read()
-        image_hwc = np.transpose(image, (1,2,0))
-        anns = self._coco.loadAnns(annotation_ids)
-        target = {}
-        # ID
-        target["image_id"] = image_info['id']
-        target['annotation_id'] = [ann['id'] for ann in anns]
-        # Bboxes
-        target["boxes"] = [ann['bbox'] for ann in anns]
-        target['bbox_mode'] = [ann['bbox_mode'] for ann in anns]
-
-        # Masks
-        masks = [self._coco.annToMask(ann) for ann in anns]
-        target['masks'] = masks
-        
-        # Labels
-        labels = [ann['category_id'] for ann in anns]
-        target['labels'] = torch.tensor(labels)
-
-        # Area
-        areas = [ann['area'] for ann in anns]
-        target['area'] = areas
-
-        # Iscrowd
-        iscrowd = [ann['iscrowd'] for ann in anns]
-        target['iscrowd'] = torch.tensor(iscrowd)
-        
-        return image_hwc, target
- 
-    def _xywh_to_xyxy(self, single_bbox:list):
-        """Convert [x, y, width, height] to [xmin, ymin, xmax, ymax]"""
-        
-        return [single_bbox[0], single_bbox[1], single_bbox[0]+single_bbox[2], single_bbox[1]+single_bbox[3]]
-
-class PreditDataset(Dataset):
-    """Predict Dataset with no target export"""
-    def __init__(self, coco_train:str, coco_predict:str, transform=get_transform):
-        """ 
-        Args:
-            coco_train: The merged train coco json file, we need to use the mean and std from the train dataset
-            coco_predict : The merged predict coco json file path exported from merge_coco represent the predict image dataset
-            transform : transform use to transfrom the dataset
-        """
-        self._train_coco = COCO(coco_train)
-        self._coco = COCO(coco_predict)
-        self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
-        self._transform = transform
-    
-    def __len__(self):
-        return len(self._coco.imgs)
-
-    def __getitem__(self, idx):
-        with rio.open(self._coco.imgs[idx+1]['file_name']) as f:
-            image = f.read()
-        
-        if self._transform:
-            image = self._transform(image, train=False, 
-                                    mean=self._train_coco.dataset['info'][0]['total_mean'],
-                                    std=self._train_coco.dataset['info'][0]['total_std'])
-
-        return image
-
-class LoadDataModule(L.LightningDataModule):
-    def __init__(self, train_coco, 
-                 predict_coco = None,
-                 batch_size: int = 1,
-                 num_workers: int = 0,
-                 transform=get_transform):
-        super().__init__()
-        self.train_coco = train_coco
-        self.predict_coco = predict_coco
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.transform = transform
-
-    def prepare_data(self):
-        pass
-
-    def setup(self, stage=None, train_pct:float=0.8, val_pct:float=0.1, test_pct:float=0.1):
-        dataset = TrainDataset(coco = self.train_coco, transform=self.transform)
-        if train_pct+val_pct+test_pct != 1.0: 
-            test_pct = 1 - (train_pct + val_pct)
-            warnings.warn(f'The sum of train, validate, and test percent are greater than %100, setting test set to {test_pct*100}%')
-        train_size = int(train_pct*len(dataset))
-        val_size = int(val_pct*len(dataset))
-        test_size = len(dataset) - (train_size + val_size)
-        train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
-        if stage == 'fit':
-            self.train_dataset = train_dataset
-            self.val_dataset = val_dataset
-        if stage == 'test':
-            self.test_dataset = test_dataset
-        if stage == 'predict':
-            self.predict_dataset = PreditDataset(coco=self.predict_coco, transform=self.transform)
-    
-    @staticmethod
-    def collate_fn(batch):
-        return tuple(zip(*batch))
-    
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, 
-                          batch_size=self.batch_size, 
-                          num_workers=self.num_workers, 
-                          collate_fn=LoadDataModule.collate_fn)
-    
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, 
-                          batch_size=self.batch_size, 
-                          num_workers=self.num_workers,
-                          collate_fn=LoadDataModule.collate_fn)
-    
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, 
-                          batch_size=self.batch_size, 
-                          num_workers=self.num_workers,
-                          collate_fn=LoadDataModule.collate_fn)
-    
-    def predict_dataloader(self):
-        return DataLoader(self.predict_dataset, 
-                          batch_size=self.batch_size, 
-                          num_workers=self.num_workers,
-                          collate_fn=LoadDataModule.collate_fn)
-    
