@@ -1,1 +1,1 @@
-from .mask_rcnn_R_101_FPN_3x import *
+from .maskrcnn_rgb import *
