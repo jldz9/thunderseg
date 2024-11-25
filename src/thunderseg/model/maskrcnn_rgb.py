@@ -20,7 +20,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as maskUtils
 
-from DLtreeseg.utils import bbox_from_mask, Config
+from thunderseg.utils import bbox_from_mask, Config
 
 cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
 

@@ -5,7 +5,7 @@ sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
 import torch
 import numpy as np
 import lightning as L
-from DLtreeseg.core import Tile, create_project_structure, MaskRCNNModule, LoadDataModule
+from thunderseg.core import Tile, create_project_structure, MaskRCNNModule, LoadDataModule
 
 """
 Image preprocess module for DLtreeseg, include image IO, tilling
@@ -33,9 +33,9 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from torchvision import transforms 
 from torchvision.transforms import v2 as T
 
-from DLtreeseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
-from DLtreeseg.core import save_h5, to_file, TrainDataset, PreditDataset
-from DLtreeseg.model import mask_rcnn_R_101_FPN_3x
+from thunderseg.utils import pack_h5_list, to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
+from thunderseg.core import save_h5, to_file, TrainDataset, PreditDataset
+from thunderseg.model import mask_rcnn_R_101_FPN_3x
 
 import torchvision.datasets.mnist
 

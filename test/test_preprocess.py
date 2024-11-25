@@ -7,8 +7,8 @@ import numpy as np
 from rasterio.windows import Window, transform
 from rasterio.transform import from_origin
 sys.path.append((Path(__file__).parents[1] / 'src').as_posix())
-from DLtreeseg.core.preprocess import Tile
-from DLtreeseg.utils import merge_coco
+from thunderseg.core.preprocess import Tile
+from thunderseg.utils import merge_coco
 from pycocotools.coco import COCO
 
 fpath = Path('/home/vscode/remotehome/DL_drake/Drake/Ref/Drake20220928_MS.tif')

@@ -2,7 +2,7 @@ import sys
 import time
 sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
 
-from DLtreeseg import main
+from thunderseg import main
 main.main(['--init', '/home/vscode/remotehome/DL_drake/output'])
 main.main(['preprocess', '-c', '/home/vscode/remotehome/DL_drake/output'])
 #time.sleep(5)

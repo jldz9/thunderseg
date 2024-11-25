@@ -20,7 +20,7 @@ from rasterio.transform import Affine
 from rasterio.enums import Resampling
 from shapely import box
 
-from DLtreeseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
+from thunderseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
 
 
 class Tile: 

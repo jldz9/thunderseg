@@ -12,7 +12,7 @@ from rasterio.windows import transform as window_transform
 from rasterio.features import shapes
 from shapely.geometry import shape, box
 
-from DLtreeseg.utils import float_to_binary_mask, merge_coco, Suppressor, windowdict_to_window
+from thunderseg.utils import float_to_binary_mask, merge_coco, Suppressor, windowdict_to_window
 from pycocotools.coco import COCO
 """
 Module include post-process functions for DLtreeseg, including image mosaic

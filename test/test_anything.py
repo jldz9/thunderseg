@@ -2,15 +2,15 @@ from pathlib import Path
 import sys
 sys.path.append('/home/vscode/remotehome/DL_packages/DLtreeseg/src')
 from torchvision.transforms import v2 as T
-from DLtreeseg.core import MaskRCNN_RGB, LoadDataModule, get_transform, train_model
+from thunderseg.core import MaskRCNN_RGB, LoadDataModule, get_transform, train_model
 import torch
 import lightning as L
-from DLtreeseg.core import TrainDataset, Postprocess
-from DLtreeseg.utils import check_image_target
+from thunderseg.core import TrainDataset, Postprocess
+from thunderseg.utils import check_image_target
 import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from DLtreeseg.core.preprocess import Tile
+from thunderseg.core.preprocess import Tile
 import rasterio as rio
 from pycocotools.coco import COCO
 from lightning.pytorch.loggers import TensorBoardLogger

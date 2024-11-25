@@ -20,7 +20,7 @@ from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as maskUtils
 
-from DLtreeseg.utils import  bbox_from_mask
+from thunderseg.utils import  bbox_from_mask
 #from DLtreeseg.utils import check_image_target
 
 class MaskRCNN_MS(L.LightningModule):

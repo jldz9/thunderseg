@@ -12,10 +12,10 @@ from colorama import Fore, init
 init(autoreset=True)
 
 from pycocotools.coco import COCO
-from DLtreeseg.core import Tile, Train, Postprocess
-from DLtreeseg.utils import merge_coco, Config, create_project_structure
-from DLtreeseg.model import maskrcnn_rgb
-from DLtreeseg._version import __version__
+from thunderseg.core import Tile, Train, Postprocess
+from thunderseg.utils import merge_coco, Config, create_project_structure
+from thunderseg.model import maskrcnn_rgb
+from thunderseg._version import __version__
 
 def create_parser():
     synopsis = 'This is a python interface for DLtreeseg program'
