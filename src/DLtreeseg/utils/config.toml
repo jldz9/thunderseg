@@ -15,6 +15,10 @@ MODE = "BGR"
 ENABLE = false
 RESOLUTION = 0.1 # meter
 
+[PREPROCESS.TRANSFORM]
+RANDOM_CROP_HEIGHT = 512
+RANDOM_CROP_WIDTH = 512
+
 [PREPROCESS.COCO_INFO]
 NAME = "testdataset"
 VERSION = "1.0"
@@ -25,17 +29,14 @@ URL = "unknown"
 # e.g.
 # time = '2019-08-24'
 # email = 'myemail@email.com'
+
 [TRAIN]
 MODEL = "maskrcnn_rgb" # other model option in the furture
-ACCELERATOR = "gpu"
-DEVICES = 1
 MAX_EPOCHS = 100
-
-[TRAIN.DATAMODULE]
-BATCH_SIZE = 5
-NUM_WORKERS = 15
-TRANSOFRM = "default" # Or customized transform file path
-
-[TRAIN.MASKRCNNRGB]
 NUM_CLASSES = 2
 LEARNING_RATE = 1e-3
+BATCH_SIZE = 5
+NUM_WORKERS = 15
+
+
+
