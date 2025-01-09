@@ -88,9 +88,9 @@ def train_step(cfg, customize_transform=None):
         train.fit()
     return cfg
 def predict_step(cfg):
-    assert Path(cfg.IO.ANNOTATIONS+'/train_coco.json').is_file, f"Cannot find {cfg.IO.ANNOTATIONS+'/train_coco.json'}"
+    assert Path(cfg.IO.ANNOTATIONS+'/train_coco.json').is_file, f"Cannot find {cfg.IO.ANNOTATIONS+'/train_coco.json'}, did you run preprocess step?"
     coco_train = COCO(cfg.IO.ANNOTATIONS+'/train_coco.json')
-    if Path(cfg.IO.ANNOTATIONS+'/train_coco.json').is_file():
+    if Path(cfg.IO.ANNOTATIONS+'/predict_coco.json').is_file():
         predict_coco = COCO(cfg.IO.ANNOTATIONS+'/predict_coco.json')
     else:
         predict_rasters = list(Path(cfg.IO.PREDICT_RASTER_DIR).glob('*.tiff')) + list(Path(cfg.IO.PREDICT_RASTER_DIR).glob('*.tif'))
