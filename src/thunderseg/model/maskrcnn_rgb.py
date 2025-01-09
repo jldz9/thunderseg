@@ -68,7 +68,7 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
             image = temp['image']
         temp = image_only_transform(image=image)
         image = temp['image']
-        temp = image_and_target_transform(image=image, 
+        temp = image_and_target_transform(image=image.copy(), 
                                         masks=target['masks']
                                         )
         image = temp['image']
