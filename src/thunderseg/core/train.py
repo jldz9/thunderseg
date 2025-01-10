@@ -24,7 +24,7 @@ class Train():
                  callbacks = None,
                  ckpt_path = None
                  ):
-        """The main entry point of the training process, this class combine basic training steps that used in model sub-package
+        """The main entry point of the training process.
             Args:
                 model: Lightningmodule, find more detail in https://lightning.ai/docs/pytorch/stable/common/lightning_module.html
                 datamodule: LightningDataModule, find more detail in https://lightning.ai/docs/pytorch/stable/data/datamodule.html
