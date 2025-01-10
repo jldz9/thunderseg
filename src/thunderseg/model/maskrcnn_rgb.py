@@ -241,7 +241,8 @@ class LoadDataModule(L.LightningDataModule):
     
     @staticmethod
     def collate_fn(batch):
-        return tuple(zip(*batch))
+        filtered_batch = [item for item in batch if len(item[1].get('annotation_id', [])) > 0]
+        return tuple(zip(*filtered_batch))
     
     def train_dataloader(self):
         return DataLoader(self.train_dataset, 
@@ -293,13 +294,18 @@ class MaskRCNN_RGB(L.LightningModule):
             return self.model(images)
 
     def training_step(self, batch, batch_idx):
+        if not batch:
+            return None
         images, targets = batch
         loss_dict = self.forward(images, targets)
+        self.log_dict(loss_dict, on_step=True, on_epoch=True, logger=True, batch_size=len(images))
         loss = sum(loss for loss in loss_dict.values())
-        self.log('train_loss', loss)
+        self.log('loss_sum', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True, batch_size=len(images))
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if not batch:
+            return None
         images, targets = batch
         predictions = self.forward(images)
         score_threshold = 0.5  # TODO: Add this to config file 
@@ -410,4 +416,54 @@ class MaskRCNN_RGB(L.LightningModule):
         optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005) # TODO make this flexiable
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
         return [optimizer], [scheduler]
-    
+   
+
+def ground_truth_coco(ground_truths):
+    """
+    Convert ground truth data to COCO format.
+    Args:
+        ground_truths: List of dictionaries with 'boxes', 'masks', and 'labels'.
+    Returns:
+        coco_gt: Dictionary in COCO format.
+    """
+    coco_gt = {"annotations": [], "images": [], "categories": []}
+
+    for idx, gt in enumerate(ground_truths):
+        # Image information
+        coco_gt["images"].append({"id": gt['image_id']})
+        # conver tensor to list
+        gt['boxes'] = gt['boxes'].tolist()
+        gt['labels'] = gt['labels'].tolist()
+        gt['area'] = gt['area'].tolist()
+        for i, (annotation_id, bbox, mask, label, area, iscrowd) in enumerate(zip(gt['annotation_id'], 
+                                                                   gt["boxes"], 
+                                                                   gt["masks"], 
+                                                                   gt["labels"],
+                                                                   gt["area"],
+                                                                   gt["iscrowd"])):
+            # Convert mask to RLE format
+            rle = maskUtils.encode(np.asfortranarray(mask))
+            rle["counts"] = rle["counts"].decode("utf-8")  # For JSON serialization
+            coco_bbox = [bbox[0], bbox[1], bbox[2] - bbox[0], bbox[3] - bbox[1]] # Convert to [x, y, width, height]
+            # Add annotation
+            coco_gt["annotations"].append({
+                "id": annotation_id,
+                "image_id": gt['image_id'],
+                "category_id": label,
+                "bbox": coco_bbox,
+                "bbox_mode": "xywh",
+                "segmentation": rle,
+                "area": area,  
+                "iscrowd": iscrowd,
+            })
+        
+        # Add categories
+        unique_labels = set(gt["labels"])
+        for label in unique_labels:
+            coco_gt["categories"].update({"id": label, "name": f"class_{label}"})
+    # Remove duplicates categories in the list of dicts 
+    unique_dicts = list({frozenset(item.items()) for item in coco_gt["categories"]})
+    coco_gt["categories"] = [dict(item) for item in unique_dicts]
+    return coco_gt
+
+
