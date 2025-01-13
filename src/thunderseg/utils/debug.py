@@ -38,6 +38,18 @@ def check_image_target(image, target=None, savepath=None):
     if savepath is not None: 
         plt.savefig(savepath, bbox_inches='tight',pad_inches=0)
         
-
+def find_cuda_tensors(data, parent_key=""):
+    """
+    Recursively search for CUDA tensors in a nested data structure and print their keys/paths.
+    """
+    if torch.is_tensor(data):
+        if data.is_cuda:
+            print(f"CUDA tensor found at key: {parent_key}, shape: {data.shape}")
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            find_cuda_tensors(value, f"{parent_key}.{key}" if parent_key else key)
+    elif isinstance(data, list):
+        for idx, value in enumerate(data):
+            find_cuda_tensors(value, f"{parent_key}[{idx}]")
 
 
