@@ -60,7 +60,8 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
         A.HorizontalFlip(),
         A.RandomRotate90(),
     ], n=2, p=0.5),
-    A.RandomCrop(height=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT, width=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH),
+    A.RandomCrop(height=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT, 
+                 width=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH),
     ToTensorV2()])
     if train:
         if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
@@ -238,7 +239,7 @@ class LoadDataModule(L.LightningDataModule):
             self.test_dataset = test_dataset
         if stage == 'predict':
             self.predict_dataset = PreditDataset(train_coco=self.train_coco, predict_coco=self.predict_coco, transform=self.transform)
-    
+        #TODO make use of val/test dataset if provided, split train dataset if not provided
     @staticmethod
     def collate_fn(batch):
         filtered_batch = [item for item in batch if len(item[1].get('annotation_id', [])) > 0]
@@ -284,6 +285,7 @@ class MaskRCNN_RGB(L.LightningModule):
         # Replace the mask predictor with a new one
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
         self.learning_rate = learning_rate
+        self.validation_step_outputs = []
         self.save_hyperparameters()
         
     def forward(self, images, targets=None):
@@ -308,75 +310,12 @@ class MaskRCNN_RGB(L.LightningModule):
             return None
         images, targets = batch
         predictions = self.forward(images)
-        score_threshold = 0.5  # TODO: Add this to config file 
-        mask_threshold = 0.5 # TODO: Add this to config file 
-        self.val_results_bbox = []
-        self.val_results_mask = []
-        self.coco_gt = COCO()
-        coco_gt = {
-            'images': [],
-            'annotations': [],
-            'categories': []
-        }
-        for i, prediction in enumerate(predictions):
-            image_id = targets[i]['image_id']
-            for j, _ in enumerate(prediction['masks']):
-                if prediction['scores'][j].item() < score_threshold:
-                    continue
-                binary_mask = (prediction['masks'][j, 0] >mask_threshold).cpu().numpy().astype(np.uint8)
-                if np.sum(binary_mask) == 0:
-                    continue
-                rle_mask = maskUtils.encode(np.asfortranarray(binary_mask))
-                self.val_results_mask.append({
-                    'image_id': image_id,
-                    'category_id': int(prediction['labels'][j]),
-                    'segmentation': rle_mask,
-                    'score': float(prediction['scores'][j])
-                })
-                x1, y1, x2, y2 = prediction['boxes'][j].cpu().numpy()
-                self.val_results_bbox.append({
-                'image_id': image_id,
-                'category_id': int(prediction['labels'][j]),
-                'bbox': [x1, y1, x2 - x1, y2 - y1],
-                'score': float(prediction['scores'][j])
-                })
-        for i, target in enumerate(targets):
-            coco_gt['images'].append(
-                {'id': target['image_id'],
-                 'width':images[i].shape[1],
-                 'height': images[i].shape[2]}
-            )
-            coco_gt['categories'].append(
-                {"id":1, "name": "shurb", "supercategory": "plant"}
-            )
-            if len(target['annotation_id']) == 0:
-                coco_gt['annotations'].append(
-                    {
-                        "id": 0,
-                        "image_id": target['image_id'],
-                        "category_id": 1,
-                        "bbox": [0,0,0,0],
-                        "segmentation": maskUtils.encode(np.asfortranarray(np.zeros((images[i].shape[1], 
-                                                                                    images[i].shape[2])).astype(np.uint8))),
-                        'area':0,
-                        'iscrowd':0
-                    })
-            else:
-                for j, ann_id in enumerate(target['annotation_id']):
-                    x1, y1, x2, y2 = target['boxes'][j].cpu().numpy().astype(np.float32)
-                    coco_gt['annotations'].append(
-                        {
-                            "id": ann_id,
-                            "image_id": target['image_id'],
-                            "category_id": target['labels'][j],
-                            "bbox": [x1, y1, x2 - x1, y2 - y1],
-                            "segmentation": maskUtils.encode(np.asfortranarray(target['masks'][j].cpu().numpy())),
-                            'area':target['area'][j].item(),
-                            'iscrowd':target['iscrowd'][j]
-                        }
-                ) 
-        self.coco_gt.dataset = copy.deepcopy(coco_gt)
-        self.coco_gt.createIndex()
+        image_ids = [target['image_id'] for target in targets]
+        coco_gt = ground_truth_coco(images, targets)
+        coco_p = predictions_coco(predictions, image_ids)
+        self.validation_step_outputs.append((coco_gt, coco_p))
+       
+
 
     def predict_step(self, batch, batch_idx):
         images = batch
@@ -384,33 +323,32 @@ class MaskRCNN_RGB(L.LightningModule):
         return predictions
 
     def on_validation_epoch_end(self):
-        if len(self.val_results_bbox) > 0:
-            coco_dt_bbox = self.coco_gt.loadRes(self.val_results_bbox)
-            coco_eval_bbox = COCOeval(self.coco_gt, coco_dt_bbox, iouType='bbox')
-            coco_eval_bbox.evaluate()
-            coco_eval_bbox.accumulate()
-            coco_eval_bbox.summarize()
-            self.log_dict({
-                "bbox_AP": coco_eval_bbox.stats[0],
-                "bbox_AP50": coco_eval_bbox.stats[1],
-                "bbox_AP75": coco_eval_bbox.stats[2]
-            }, on_epoch=True)
+        if not self.validation_step_outputs:
+            return
+        for i, (gt, p) in enumerate(self.validation_step_outputs):
+            if i == 0:
+                coco_gt = gt
+                coco_p = p
+            else:
+                [coco_gt['annotations'].append(annotation) for annotation in gt['annotations'] if annotation not in coco_gt['annotations']]
+                [coco_gt['images'].append(image) for image in gt['images'] if image not in coco_gt['images']]
+                [coco_gt['categories'].append(category) for category in gt['categories'] if category not in coco_gt['categories']]
+                [coco_p.append(a) for a in p if a not in coco_p]
         
-        if len(self.val_results_mask) > 0:
-            coco_dt_mask = self.coco_gt.loadRes(self.val_results_mask)
-            coco_eval_mask = COCOeval(self.coco_gt, coco_dt_mask, iouType='segm')
-            coco_eval_mask.evaluate()
-            coco_eval_mask.accumulate()
-            coco_eval_mask.summarize()
-            self.log_dict({
-                "mask_AP": coco_eval_mask.stats[0],
-                "mask_AP50": coco_eval_mask.stats[1],
-                "mask_AP75": coco_eval_mask.stats[2]
-            }, on_epoch=True)
-            
-            # Reset results storage for the next epoch
-            self.val_results_bbox.clear()
-            self.val_results_mask.clear()
+        cocoval = COCO()
+        cocoval.dataset = coco_gt
+        cocoval.createIndex()
+        coco_dt = cocoval.loadRes(coco_p)
+        mask_eval = COCOeval(cocoval, coco_dt, iouType='segm')
+        mask_eval.evaluate()
+        mask_eval.accumulate()
+        mask_eval.summarize()
+        bbox_eval = COCOeval(cocoval, coco_dt, iouType='bbox')
+        bbox_eval.evaluate()
+        bbox_eval.accumulate()
+        bbox_eval.summarize()
+        self.log('mask_mAP', mask_eval.stats[0], on_epoch=True, prog_bar=True, logger=True)
+        self.log('bbox_mAP', bbox_eval.stats[0], on_epoch=True, prog_bar=True, logger=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9, weight_decay=0.0005) # TODO make this flexiable
@@ -418,7 +356,7 @@ class MaskRCNN_RGB(L.LightningModule):
         return [optimizer], [scheduler]
    
 
-def ground_truth_coco(ground_truths):
+def ground_truth_coco(images, ground_truths):
     """
     Convert ground truth data to COCO format.
     Args:
@@ -426,21 +364,20 @@ def ground_truth_coco(ground_truths):
     Returns:
         coco_gt: Dictionary in COCO format.
     """
+
     coco_gt = {"annotations": [], "images": [], "categories": []}
 
-    for idx, gt in enumerate(ground_truths):
+    for idx, (img, gt) in enumerate(zip(images, ground_truths)):
         # Image information
-        coco_gt["images"].append({"id": gt['image_id']})
+        coco_gt["images"].append({"id": gt['image_id'], "height": img.shape[1], "width": img.shape[2]})
         # conver tensor to list
-        gt['boxes'] = gt['boxes'].tolist()
-        gt['labels'] = gt['labels'].tolist()
-        gt['area'] = gt['area'].tolist()
-        for i, (annotation_id, bbox, mask, label, area, iscrowd) in enumerate(zip(gt['annotation_id'], 
-                                                                   gt["boxes"], 
-                                                                   gt["masks"], 
-                                                                   gt["labels"],
-                                                                   gt["area"],
-                                                                   gt["iscrowd"])):
+        gt_cpu = {key:value.cpu().numpy() if torch.is_tensor(value) else value for key, value in gt.items()}
+        for i, (annotation_id, bbox, mask, label, area, iscrowd) in enumerate(zip(gt_cpu['annotation_id'], 
+                                                                   gt_cpu["boxes"], 
+                                                                   gt_cpu["masks"], 
+                                                                   gt_cpu["labels"],
+                                                                   gt_cpu["area"],
+                                                                   gt_cpu["iscrowd"])):
             # Convert mask to RLE format
             rle = maskUtils.encode(np.asfortranarray(mask))
             rle["counts"] = rle["counts"].decode("utf-8")  # For JSON serialization
@@ -458,12 +395,50 @@ def ground_truth_coco(ground_truths):
             })
         
         # Add categories
-        unique_labels = set(gt["labels"])
+        unique_labels = set(gt_cpu["labels"])
         for label in unique_labels:
-            coco_gt["categories"].update({"id": label, "name": f"class_{label}"})
+            coco_gt["categories"].append({"id": label, "name": f"class_{label}"})
     # Remove duplicates categories in the list of dicts 
     unique_dicts = list({frozenset(item.items()) for item in coco_gt["categories"]})
     coco_gt["categories"] = [dict(item) for item in unique_dicts]
     return coco_gt
 
+def predictions_coco(predictions, image_ids):
+    
+    """
+    Convert Mask R-CNN predictions to COCO format.
 
+    Args:
+        predictions (dict): Mask R-CNN predictions with keys:
+            - "boxes" (list of [x_min, y_min, x_max, y_max])
+            - "scores" (list of float)
+            - "labels" (list of int)
+            - "masks" (list of numpy arrays)
+        image_ids (int): Image ID corresponding to the predictions.
+
+    Returns:
+        list: COCO-formatted predictions.
+    """
+    coco_p = []
+    for i, (prediction, image_id) in enumerate(zip(predictions, image_ids)):
+        
+        prediction_cpu = {key:value.cpu().numpy() if torch.is_tensor(value) else value for key, value in prediction.items()}
+        for j, (box, label, score, mask) in enumerate(zip(prediction_cpu['boxes'], 
+                                                           prediction_cpu['labels'], 
+                                                           prediction_cpu['scores'], 
+                                                           prediction_cpu['masks'])):
+            # Convert mask to RLE format
+            binary_mask = np.squeeze((mask > 0.5).astype(np.uint8), axis=0)
+            rle = maskUtils.encode(np.asfortranarray(binary_mask))
+            rle["counts"] = rle["counts"].decode("utf-8")
+            # Convert bbox to [x, y, width, height]
+            bbox = [box[0], box[1], box[2] - box[0], box[3] - box[1]]
+            # Add annotation
+            coco_p.append({
+                "image_id": image_id,
+                "category_id": label,
+                "bbox": bbox,
+                "segmentation": rle,
+                "score": score,
+            })
+    return coco_p
