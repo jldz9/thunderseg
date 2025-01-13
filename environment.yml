@@ -13,13 +13,12 @@ dependencies:
     - opencv=4.10.0
     - colorama=0.4.6
     - conda-forge::sqlite=3.46.1
-    - pytorch=2.4.1
-    - torchvision=0.19.0
-    - pytorch-cuda=12.4
     - albumentations=1.4.20
-    - lightning=2.4.0
     - pip
     - pip:
         - pycocotools
-        - tensorboardX
+        - tensorboard
         - tomli_w
+        - torch==2.4.1
+        - torchvision==0.19.1
+        - lightning==2.4.0
