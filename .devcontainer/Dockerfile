@@ -1,4 +1,4 @@
-FROM pytorch/pytorch:2.4.1-cuda12.4-cudnn9-runtime
+FROM ubuntu:22.04
 
 # Set the non-root username and group
 ARG USERNAME=vscode
@@ -9,20 +9,31 @@ ENV SHELL=/bin/bash
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
     && apt-get update \
-    && apt-get install -y sudo \
+    && apt-get install -y \
+    sudo \
+    wget \
+    curl \
+    bash \
+    && rm -rf /var/lib/apt/lists/* \
     && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
-RUN apt-get install -y bash
+
 RUN ln -sf /bin/bash /bin/sh
-RUN chown -R vscode /opt/conda
+RUN chown -R $USERNAME /home/vscode
 CMD ["bash"]
 EXPOSE 3000 8080 8081 8082
-
+# Get Miniconda
 USER $USERNAME
-RUN conda init
-RUN conda update conda -y
-RUN conda install -y  geopandas==1.0.1 opencv==4.10.0 rasterio==1.4.1 && conda clean -afy
-RUN pip install --no-cache-dir lightning==2.4.0
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /home/vscode/miniconda.sh \
+    && chmod +x /home/vscode/miniconda.sh \
+    && bash /home/vscode/miniconda.sh -b -u -p /home/vscode/miniconda3 
+ENV PATH=/home/vscode/miniconda3/bin:$PATH
+RUN /home/vscode/miniconda3/bin/conda init bash
+RUN /home/vscode/miniconda3/bin/conda update conda -y
+RUN wget https://raw.githubusercontent.com/jldz9/thunderseg/refs/heads/master/environment.yml -O /home/vscode/environment.yml
+RUN /home/vscode/miniconda3/bin/conda env create -f /home/vscode/environment.yml
+RUN /home/vscode/miniconda3/bin/conda update -n base -c defaults conda -y
+
 
 
 
