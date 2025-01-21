@@ -8,5 +8,16 @@ authors = [{name="Jiawei Li", email="Jiaweiliwork@outlook.com"}]
 description = "A deep learning framwork focus on image segmentation"
 readme = 'README.md'
 dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+[project.scripts]
+thunderseg = "thunderseg.main:main"
+[tool.setuptools.package-data]
+"thunderseg.utils" = ['config.toml']
+[tool.setuptools.packages.find]
+where = ['src']
 [tool.setuptools.dynamic]
 version = {attr = "thunderseg._version.__version__"}
