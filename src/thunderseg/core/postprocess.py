@@ -20,7 +20,7 @@ class Postprocess:
     """
     Handle georeference for predictions
     """
-    # TODO: Add functions that merge tiles back into whole geo-referenced raster  
+     
     def __init__(self, predict_coco, predict_result, output_path, predict_result_parser = None):
         """The predict_coco should be combined from export from merge_coco function under utils.tool"""  #TODO add more compatibility to regular COCO format in the furture
         if isinstance(predict_coco, COCO):
@@ -37,6 +37,7 @@ class Postprocess:
             self.predict_parser = 'mask_rcnn'
 
     def mask_rcnn_postprocess(self):
+        print(f'{Fore.GREEN} Working on post-processing for Mask-RCNN')
         for info in self.coco.dataset['info']:
             affine = Affine(*info['affine'])
             img_range = info['image_ids'].split('-')
