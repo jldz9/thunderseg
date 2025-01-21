@@ -1,9 +1,9 @@
 # This is the config file for thunderseg program. Program use metric system
 [IO]
-WORKDIR = "/home/vscode/remotehome/DL_drake/output"
-TRAIN_RASTER_DIR = "/home/vscode/remotehome/DL_drake/Drake/train"
-TRAIN_SHP_DIR = "/home/vscode/remotehome/DL_drake/shp"
-PREDICT_RASTER_DIR = "/home/vscode/remotehome/DL_drake/Drake/predict"
+WORKDIR =  "/" # Your Path to the working directory
+TRAIN_RASTER_DIR = "/" # Your Path to the training raster directory
+TRAIN_SHP_DIR = "/" # Your Path to the training shapefile directory
+PREDICT_RASTER_DIR = "/" # Your Path to the prediction raster directory
 
 [PREPROCESS]
 TILE_SIZE = 100 # meter
