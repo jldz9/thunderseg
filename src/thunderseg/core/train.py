@@ -14,6 +14,7 @@ class Train():
     def __init__(self, model: LightningModule, 
                  datamodule: LightningDataModule,
                  train_coco,
+                 validate_coco,
                  predict_coco,
                  batch_size:int=5, 
                  num_workers:int=0,
@@ -31,8 +32,8 @@ class Train():
                 batch_size: used in 
         """
         self.model = model(num_classes, learning_rate)
-        self.datamodule = datamodule(train_coco, predict_coco, batch_size, num_workers)
-        self.logger = TensorBoardLogger(save_dir=save_path, name='Train')
+        self.datamodule = datamodule(train_coco, validate_coco, predict_coco, batch_size, num_workers)
+        self.logger = TensorBoardLogger(save_dir=save_path, name='logs')
         self.trainer = Trainer(logger=self.logger,
                                max_epochs=max_epochs,
                                callbacks=callbacks,
