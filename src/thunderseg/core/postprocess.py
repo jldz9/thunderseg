@@ -76,13 +76,13 @@ class Postprocess:
             polygon_gdf = pd.concat(polygon_gdfs_list)
             polygon_gdf.set_crs(f'EPSG:{info["crs"]}', inplace=True)
             polygon_gdf.drop_duplicates(subset='geometry', inplace=True)
-            polygon_gdf.to_file(f'{self.output}/{Path(info["file_name"]).stem + "polygon.gpkg"}', layer='polygon', driver='GPKG') #TODO make export name in config
+            polygon_gdf.to_file(f'{self.output}/{Path(info["file_name"]).stem + "_polygon.gpkg"}', layer='polygon', driver='GPKG') #TODO make export name in config
             bbox_gdf = pd.concat(bbox_gdfs_list)
             bbox_gdf.set_crs(f'EPSG:{info["crs"]}', inplace=True)
             bbox_gdf.drop_duplicates(subset='bounding_box', inplace=True) # TODO: drop duplicates won't work for slightly different box and polygon, find a way to figure this out
-            bbox_gdf.to_file(f'{self.output}/{Path(info["file_name"]).stem + "bounding_box.gpkg"}', layer='bounding_box', driver='GPKG')
-            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "bounding_box.gpkg"}')
-            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "polygon.gpkg"}')
+            bbox_gdf.to_file(f'{self.output}/{Path(info["file_name"]).stem + "_bounding_box.gpkg"}', layer='bounding_box', driver='GPKG')
+            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "_bounding_box.gpkg"}')
+            print(f'{Fore.GREEN} Prediction saved under {self.output}/{Path(info["file_name"]).stem + "_polygon.gpkg"}')
 
     
                 
