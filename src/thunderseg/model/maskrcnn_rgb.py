@@ -29,7 +29,13 @@ from thunderseg.utils import bbox_from_mask, Config
 
 cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
 
-def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0.485, 0.456, 0.406], std: list = [0.229, 0.224, 0.225]):
+def get_transform(image:np.ndarray, 
+                  target:dict={}, 
+                  flag = 'train', 
+                  mean:list = [0.485, 0.456, 0.406], 
+                  std: list = [0.229, 0.224, 0.225],
+                  RandomCrop_height:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT,
+                  RandomCrop_width:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH):
     """
     Apply transform to both image and target using Albumentations, 
     Args:
@@ -56,27 +62,18 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
     A.Normalize(mean=mean, std=std, max_pixel_value=1)])
 
     image_and_target_transform = A.Compose([A.SomeOf([
-        A.PixelDropout(),
         A.HorizontalFlip(),
         A.RandomRotate90(),
     ], n=2, p=0.5),
-    A.RandomCrop(height=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT, 
-                 width=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH),
+    A.RandomCrop(height=RandomCrop_height, 
+                 width=RandomCrop_width),
     ToTensorV2()])
-    if train:
-        if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
-            temp = three_channel_image_only_transform(image=image)
-            image = temp['image']
-        temp = image_only_transform(image=image)
-        image = temp['image']
-        temp = image_and_target_transform(image=image.copy(), 
-                                        masks=target['masks']
-                                        )
-        image = temp['image']
-        target['area'] = torch.tensor([int(np.sum(mask.numpy())) for mask in temp['masks']])
-        drop_index = np.where(target['area'].numpy()<10)[0]
+
+    def filter_target(target, masks, threshold=10):
+        target['area'] = torch.tensor([int(np.sum(mask.numpy())) for mask in masks])
+        drop_index = np.where(target['area'].numpy() < threshold)[0]
         target['area'] = [j for i, j in enumerate(target['area']) if i not in list(drop_index)]
-        if len(target['area']) >1:
+        if len(target['area']) > 0:
             target['area'] = torch.tensor(target['area'])
             target['annotation_id'] = [j for i, j in enumerate(target['annotation_id']) if i not in list(drop_index)]
             target['masks'] = torch.stack([j for i, j in enumerate(temp['masks']) if i not in list(drop_index)])
@@ -84,64 +81,97 @@ def get_transform(image:np.ndarray, target:dict={}, train = True, mean:list = [0
             target['bbox_mode'] = ['xyxy']* len(target['area'])
             target['iscrowd'] = [int(j) for i, j in enumerate(target['iscrowd'].numpy()) if i not in list(drop_index)]
             target['labels'] = torch.tensor([int(j) for i, j in enumerate(target['labels'].numpy()) if i not in list(drop_index)])
-            return image, target
+            return target
         else:
-            target['area'] = torch.zeros((0,),dtype=torch.int64)
-            target['annotation_id'] = []
-            target['boxes'] = torch.zeros((0, 4), dtype=torch.float32)
-            target['labels'] = torch.zeros((0,), dtype=torch.int64)
-            target['masks'] = torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8)
-            target['bbox_mode'] = ['xyxy']
-            target['iscrowd'] = []
-            return image, target
-        
-    elif not train:
+            target = {
+                'area': torch.zeros((0,), dtype=torch.int64),
+                'annotation_id': [],
+                'boxes': torch.zeros((0, 4), dtype=torch.float32),
+                'labels': torch.zeros((0,), dtype=torch.int64),
+                'masks': torch.zeros((0, image.shape[1], image.shape[2]), dtype=torch.uint8),
+                'bbox_mode': ['xyxy'],
+                'iscrowd': []
+            }
+            return target
+
+    if flag == 'train':
+        if image.shape[2] == 3 and image.shape[0] > image.shape[2] and image.shape[1] > image.shape[2]: 
+            temp = three_channel_image_only_transform(image=image)
+            image = temp['image']
+        temp = image_only_transform(image=image.copy())
+        temp = image_and_target_transform(image=temp['image'].copy(), 
+                                        masks=target['masks']
+                                        )
+        target = filter_target(target.copy(), temp['masks'])
+        return temp['image'], target
+    elif flag == 'val':
+        valid_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
+                                       ToTensorV2()])
+        temp = valid_transform(image=image, masks=target['masks'])
+        image = temp['image']
+        target = filter_target(target, temp['masks'])
+        return temp['image'], target
+    elif flag == 'predict':
         predict_transform = A.Compose([A.Normalize(mean=mean, std=std, max_pixel_value=1),
                                        ToTensorV2()])
         temp = predict_transform(image=image)
-        image = temp['image']
-        return image
+        return temp['image']
     
 class TrainDataset(Dataset):
-    def __init__(self, coco:str | COCO, transform=get_transform):
+    def __init__(self, train_coco:str | COCO, valid_or_test_coco: str | COCO = None, transform=get_transform):
         """
         Args:
             coco : The merged json file path exported from merged_coco represent the image dataset
             transform : transform method use for image agumentation
         """
-        if isinstance(coco, COCO):
-            self._coco = coco
+        if isinstance(train_coco, COCO):
+            self.t_coco = train_coco
         else:
-            self._coco = COCO(coco)
+            self.t_coco = COCO(train_coco)
+        if valid_or_test_coco is not None:
+            if isinstance(valid_or_test_coco, COCO):
+                self.vt_coco = valid_or_test_coco
+            else:
+                self.vt_coco = COCO(valid_or_test_coco)
+        else:
+            self.vt_coco = None
+
         # Get parent path of the first availiable image in the dataset
-        self._img_dir = Path(self._coco.imgs[self._coco.getImgIds()[0]]['file_name']).parent.as_posix()
+        self._img_dir = Path(self.t_coco.imgs[self.t_coco.getImgIds()[0]]['file_name']).parent.as_posix()
         self._transform = transform
     def __len__(self):
-        return len(self._coco.imgs)
+        return len(self.t_coco.imgs)
 
     def __getitem__(self, idx):
         attempts = 0
-        max_attempts = len(self._coco.imgs)
+        if self.vt_coco is None:
+            coco = self.t_coco
+            flag = 'train'
+        else:
+            coco = self.vt_coco
+            flag = 'val'
+        max_attempts = len(coco.imgs)
         while attempts< max_attempts:
             # This make sure filter out empty annotations
-            image_info = self._coco.imgs[idx+1] # pycocotools use id number which starts from 1.
-            annotation_ids = self._coco.getAnnIds(imgIds=idx+1)
+            image_info = coco.imgs[idx+1] # pycocotools use id number which starts from 1.
+            annotation_ids = coco.getAnnIds(imgIds=idx+1)
             if len(annotation_ids) > 0:
                 image, target = self._load_image_target(image_info, annotation_ids)
                 if self._transform is not None:
-                    image, target= self._transform(image, target, train = True, 
-                                                   mean=self._coco.dataset['summary']['total_mean'],
-                                                   std=self._coco.dataset['summary']['total_std'])
+                    image, target= self._transform(image.copy(), target.copy(), flag = flag, 
+                                                mean=self.t_coco.dataset['summary']['total_mean'],
+                                                std=self.t_coco.dataset['summary']['total_std'])
                     return image, target
             else:
-                idx = (idx+1)% len(self._coco.imgs)
+                idx = (idx+1)% len(coco.imgs)
                 attempts += 1
+            
 
     def _load_image_target(self, image_info, annotation_ids):
         with rio.open(image_info['file_name']) as f:
             image = f.read()
         image_hwc = np.transpose(image, (1,2,0))
-        anns = self._coco.loadAnns(annotation_ids)
+        anns = self.t_coco.loadAnns(annotation_ids)
         target = {}
         # ID
         target["image_id"] = image_info['id']
@@ -151,7 +181,7 @@ class TrainDataset(Dataset):
         target['bbox_mode'] = [ann['bbox_mode'] for ann in anns]
 
         # Masks
-        masks = [self._coco.annToMask(ann) for ann in anns]
+        masks = [self.t_coco.annToMask(ann) for ann in anns]
         target['masks'] = masks
         
         # Labels
@@ -201,7 +231,7 @@ class PreditDataset(Dataset):
             image = f.read()
             image = np.transpose(image, (1, 2, 0))
         if self._transform:
-            image = self._transform(image, train=False, 
+            image = self._transform(image, flag='predict', 
                                     mean=self._train_coco.dataset['summary']['total_mean'],
                                     std=self._train_coco.dataset['summary']['total_std'])
   
@@ -209,12 +239,14 @@ class PreditDataset(Dataset):
 
 class LoadDataModule(L.LightningDataModule):
     def __init__(self, train_coco, 
+                 valid_coco = None,
                  predict_coco = None,
                  batch_size: int = 1,
                  num_workers: int = 0,
                  transform=get_transform):
         super().__init__()
         self.train_coco = train_coco
+        self.valid_coco = valid_coco
         self.predict_coco = predict_coco
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -223,15 +255,10 @@ class LoadDataModule(L.LightningDataModule):
     def prepare_data(self):
         pass
 
-    def setup(self, stage=None, train_pct:float=0.8, val_pct:float=0.1, test_pct:float=0.1):
-        dataset = TrainDataset(coco = self.train_coco, transform=self.transform)
-        if train_pct+val_pct+test_pct != 1.0: 
-            test_pct = 1 - (train_pct + val_pct)
-            warnings.warn(f'The sum of train, validate, and test percent are greater than %100, setting test set to {test_pct*100}%')
-        train_size = int(train_pct*len(dataset))
-        val_size = int(val_pct*len(dataset))
-        test_size = len(dataset) - (train_size + val_size)
-        train_dataset, val_dataset, test_dataset = random_split(dataset, [train_size, val_size, test_size])
+    def setup(self, stage=None):
+        train_dataset = TrainDataset(train_coco=self.train_coco, transform=self.transform)
+        val = TrainDataset(train_coco= self.train_coco, valid_or_test_coco = self.valid_coco, transform=self.transform)
+        val_dataset, test_dataset = random_split(val, [int(len(val)*0.5), int(len(val)*0.5)])
         if stage == 'fit':
             self.train_dataset = train_dataset
             self.val_dataset = val_dataset
@@ -315,8 +342,6 @@ class MaskRCNN_RGB(L.LightningModule):
         coco_p = predictions_coco(predictions, image_ids)
         self.validation_step_outputs.append((coco_gt, coco_p))
        
-
-
     def predict_step(self, batch, batch_idx):
         images = batch
         predictions = self.forward(images)
