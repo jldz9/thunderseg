@@ -22,7 +22,6 @@ from shapely import box
 
 from thunderseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
 
-
 class Tile: 
     """Preprocess module for image IO, tilling.
     
