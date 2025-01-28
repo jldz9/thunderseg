@@ -20,6 +20,7 @@ The installation process will take roughly 5-10 minutes and may vary depends on 
 
 ```bash
 conda env create -f https://raw.githubusercontent.com/jldz9/thunderseg/refs/heads/master/environment.yml
+pip install thunderseg
 ```
 
 ## Via Container
@@ -29,29 +30,29 @@ conda env create -f https://raw.githubusercontent.com/jldz9/thunderseg/refs/head
 </details>
 
 ??? Warning
-     If you want to activate <b> GPU</b> processing while using docker, using a NVIDIA GPU with [CUDA](https://developer.nvidia.com/cuda-gpus) support is necessary. 
+     If you want to activate<b> GPU</b> processing while using docker, using NVIDIA GPUs with [CUDA](https://developer.nvidia.com/cuda-gpus) support is necessary. 
 
      Additionally, you will need to install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) 
 ### > Use dockerfile
 
 ```bash
 wget https://raw.githubusercontent.com/jldz9/thunderseg/refs/heads/master/.devcontainer/Dockerfile 
-docker build -t thunderseg:1.0.0 .
+docker build -t thunderseg:1.0.0.dev25 .
 ```
-After running above code block, you should able to find image in docker desktop image tab 
+After running above code block, you should be able to find image in docker desktop image tab 
 ![docker image](img/docker_img_example_dark.png#only-dark)
 ![docker image](img/docker_img_example_light.png#only-light)
 or in command line: 
 ```bash
 user:~$ docker images
 REPOSITORY   TAG       IMAGE ID       CREATED             SIZE
-thunderseg   1.0.0     ba968b128eda   About an hour ago   20.5GB
+thunderseg   1.0.0.dev25     ba968b128eda   About an hour ago   20.5GB
 ```
 
 ### > Use image from Docker Hub
 
 ```bash
-docker pull jldz9/thunderseg:1.0.0
+docker pull jldz9/thunderseg:1.0.0.dev25
 ```
 
 ### > Use apptainer
@@ -69,17 +70,17 @@ You can load apptainer by using `module load apptainer` under HPC environment th
 To pull image from docker hub using apptainer: 
 
 ```bash
-apptainer pull thunderseg_100.sif docker://jldz9/thunderseg:1.0.0
+apptainer pull thunderseg_100dev.sif docker://jldz9/thunderseg:1.0.0.dev25
 ```
 
 ## Via Source code
 If you would like to contribute to this project, thanks in advance! :smile:
 
-You can pull the source code from github by:
+You can pull the source code from GitHub by:
 ```bash
-git clone -b dev https://github.com/jldz9/thunderseg.git
+git clone https://github.com/jldz9/thunderseg.git
 ```
-and then setup the environment by: 
+and then set up the environment by: 
 ```bash
 conda env create -f thunderseg/environment.yml
 ```

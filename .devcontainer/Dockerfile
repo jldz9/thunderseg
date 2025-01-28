@@ -33,6 +33,7 @@ RUN /home/vscode/miniconda3/bin/conda update conda -y
 RUN wget https://raw.githubusercontent.com/jldz9/thunderseg/refs/heads/master/environment.yml -O /home/vscode/environment.yml
 RUN /home/vscode/miniconda3/bin/conda env update --name base -f /home/vscode/environment.yml
 RUN /home/vscode/miniconda3/bin/conda update -n base -c defaults conda -y
+RUN pip install thunderseg
 
 
 
