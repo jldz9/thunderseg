@@ -20,7 +20,7 @@ RUN groupadd --gid $USER_GID $USERNAME \
 
 RUN ln -sf /bin/bash /bin/sh
 RUN chown -R $USERNAME /home/vscode
-CMD ["bash"]
+CMD ["/bin/bash", "-c"]
 EXPOSE 3000 8080 8081 8082
 # Get Miniconda
 USER $USERNAME
@@ -31,8 +31,9 @@ ENV PATH=/home/vscode/miniconda3/bin:$PATH
 RUN /home/vscode/miniconda3/bin/conda init bash
 RUN /home/vscode/miniconda3/bin/conda update conda -y
 RUN wget https://raw.githubusercontent.com/jldz9/thunderseg/refs/heads/master/environment.yml -O /home/vscode/environment.yml
-RUN /home/vscode/miniconda3/bin/conda env create -f /home/vscode/environment.yml
+RUN /home/vscode/miniconda3/bin/conda env update --name base -f /home/vscode/environment.yml
 RUN /home/vscode/miniconda3/bin/conda update -n base -c defaults conda -y
+
 
 
 
