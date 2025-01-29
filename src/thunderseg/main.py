@@ -32,7 +32,7 @@ def create_parser():
     parser = argparse.ArgumentParser(name, description=synopsis, add_help=True)
     parser.add_argument("-v", "--version", action='version', version=f'thunderseg {__version__}')
     parser.add_argument('-g', '--get_config', metavar='PATH', help='Get the default config file to given path')
-    parser.add_argument('-e', '--example_data', help='Download example dataset to ~/thunderseg_example_data')
+    parser.add_argument('-e', '--example_data', metavar='PATH', help='Download example dataset to ~/thunderseg_example_data')
     subparser = parser.add_subparsers(dest='step')
     
     preprocess = subparser.add_parser('preprocess', help='Preprocess raster into tiles and register dataset')
@@ -49,7 +49,7 @@ def create_parser():
     predict.set_defaults(func=predict_step)
     return parser
 
-def download_example_data():
+def download_example_data(download_path=None):
     if importlib.util.find_spec('gdown') is None:
         print(f'{Fore.RED}gdown is not installed, trying to install')
         try:
@@ -58,8 +58,13 @@ def download_example_data():
             print(f"Failed to install gdown. Error: {e}")
     import gdown
     url = 'https://drive.google.com/drive/folders/1Pu0oinH4SrOyVKjY5jxHqtUAg7pxoILj?usp=drive_link'
-    dest_folder = Path.home() / 'thunderseg_example_data'
-    dest_folder.mkdir(exist_ok=True)
+    if download_path is None:
+        dest_folder = Path.home() / 'thunderseg_example_data'
+        dest_folder.mkdir(exist_ok=True)
+    else: 
+        dest_folder = Path(download_path) / 'thunderseg_example_data'
+        dest_folder.mkdir(exist_ok=True)
+    print(f'{Fore.GREEN}downloading exampling data to {dest_folder}')
     gdown.download_folder(url, output=dest_folder.as_posix(), quiet=False)
 
 def check_args(func):
@@ -119,7 +124,7 @@ def preprocess_step(args):
         train_r.tile_image(mode=cfg.PREPROCESS.MODE, shp_path=cfg.IO.TRAIN_SHP+'/train_shp.shp')
         coco_path = train_r.to_COCO(cfg.IO.TEMP + f'/{r.stem}_coco.json', **cfg.PREPROCESS.COCO_INFO.to_dict())
         train_coco_list.append(coco_path)
-        if not cfg.TRAIN.SEPE_VAL:
+        if cfg.TRAIN.SEPE_VAL:
             print(f'{Fore.GREEN}Processing valid raster {r.stem}')
             train_r.tile_shape(shp_path=cfg.IO.VAL_SHP+'/valid_shp.shp')
             coco_path_v = train_r.to_COCO(cfg.IO.TEMP + f'/{r.stem}_coco_valid.json', **cfg.PREPROCESS.COCO_INFO.to_dict())
@@ -145,7 +150,7 @@ def train_step(args):
         print(f"Failed to open TensorBoard in browser. Error: {e}")
     try: 
         subprocess.run(["xdg-open", url], check=True)
-    except FileNotFoundError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
          print(f"Failed to open TensorBoard in browser. xdg-open is might not be installed in the system")
     
     print(f"{Fore.GREEN}TensorBoard is running at {url}, \nIf you are using the headless environment, you may check logs at {log_dir} later")
@@ -201,6 +206,7 @@ def predict_step(args):
         predict = Train(maskrcnn_rgb.MaskRCNN_RGB,
                       maskrcnn_rgb.LoadDataModule,
                       coco_train,
+                      validate_coco = None,
                       predict_coco=predict_coco,
                       batch_size=cfg.TRAIN.BATCH_SIZE,
                       num_workers=cfg.TRAIN.NUM_WORKERS,
@@ -230,7 +236,7 @@ def main():
         sys.exit(0)
 
     if args.example_data:
-        download_example_data()
+        download_example_data(args.example_data)
         sys.exit(0)
     
     import torch
