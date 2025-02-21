@@ -10,10 +10,12 @@ import pickle
 import sys
 import tempfile
 import tomllib
+import torch.nn as nn
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
+from torchvision.models.detection.backbone_utils import BackboneWithFPN
 
 import numpy as np
 import tomli_w
@@ -23,6 +25,22 @@ from pycocotools.coco import COCO
 from rasterio.windows import Window
 from shapely import Polygon
 
+class BackboneWithGivenFPN(BackboneWithFPN):
+    def __init__(
+            self,
+            backbone: nn.Module,
+            fpn: nn.Module,
+            return_layers: Dict[str, str],
+            in_channels_list: List[int],
+            out_channels: int,
+            extra_blocks = None,
+            norm_layer = None,
+            
+        ) -> None:
+            super().__init__(backbone, return_layers, in_channels_list, out_channels, extra_blocks, norm_layer)
+            fpn: nn.Module
+            
+        
 class COCO_parser:
     """COCO JSON format parser for images.
 
@@ -546,3 +564,4 @@ def validate_coco(coco: dict):
         if key not in coco:
             raise ValueError(f"Missing required key: {key}")
     return True
+
