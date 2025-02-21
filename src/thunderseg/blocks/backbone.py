@@ -1,11 +1,11 @@
 import torch.nn as nn
 
 from torchvision.models.resnet import Bottleneck
-from torchvision.models._utils import BackboneWithFPN
 
 from thunderseg.blocks.fpn import CBAM_FPN
+from thunderseg.utils.tool import BackboneWithGivenFPN
 
-class HR_ResNet(nn.Mdoule):
+class HR_ResNet(nn.Module):
     """A high resolution shallow ResNet focus on small object to only keep C2, and C3.
     Ideal to use as a backbone for UAS detections for small objects. 
     """
@@ -56,7 +56,7 @@ class HR_ResNet(nn.Mdoule):
         # -------
         # Reduce C4 channels to C4_reduce (H/8, W/8)
         # -------
-        self.reduce_l3 = nn.Sequential(
+        self.layer3_reduce = nn.Sequential(
             nn.Conv2d(1024, 256, 3, padding=1),  # reduce channels
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True)
@@ -69,7 +69,7 @@ class HR_ResNet(nn.Mdoule):
         c2 = self.layer1(c1) # C2: [B, 256, H/2, W/2] (stride=1)
         c3 = self.layer2(c2) # C3: [B, 512, H/4, W/4] (stride=2)
         c4 = self.layer3(c3) # C4: [B, 1024, H/8, W/8] (stride=2)
-        c4_reduce = self.reduce_l3(c4) # C4_reduce: [B, 256, H/8, W/8] Reduce channel becuase C4 stage does not capture small objects
+        c4_reduce = self.layer3_reduce(c4) # C4_reduce: [B, 256, H/8, W/8] Reduce channel becuase C4 stage does not capture small objects
 
         return {"C2":c2, "C3":c3, "C4":c4_reduce}
     
@@ -90,5 +90,6 @@ class HR_ResNet(nn.Mdoule):
 def hr_resnet_fpn():
     backbone = HR_ResNet()
     in_channels_list = [256, 512, 256] #C2:256, C3:512, C4:256
-    fpn = CBAM_FPN(in_channels_list, out_channels=128) # Reduce channels to 128 to increase speed
-    return BackboneWithFPN(backbone=backbone, fpn=fpn, return_layers={"C2":"C2", "C3":"C3", "C4":"C4"})
+    out_channels = 128
+    fpn = CBAM_FPN(in_channels_list, out_channels=out_channels) # Reduce channels to 128 to increase speed
+    return BackboneWithGivenFPN(backbone=backbone, fpn=fpn, in_channels_list=in_channels_list, out_channels=out_channels, return_layers={"layer1":"C2", "layer2":"C3", "layer3_reduce":"C4"})
