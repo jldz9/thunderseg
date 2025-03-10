@@ -3,7 +3,7 @@ from detectron2.modeling import build_model
 base_model: str = "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
 weight = '/home/jldz9/DL/models/230729_05dates.pth'
 
-cfg = get_config(base_model)
+#cfg = get_config(base_model)
 cfg.MODEL.WEIGHTS = weight
 cfg.DATALOADER.NUM_WORKERS = 6
 cfg.SOLVER.IMS_PER_BATCH = 2

@@ -7,16 +7,15 @@ import numpy as np
 from rasterio.windows import Window, transform
 from rasterio.transform import from_origin
 sys.path.append((Path(__file__).parents[1] / 'src').as_posix())
-from thunderseg.core.preprocess import Tile
+from thunderseg.core.preprocess import Preprocess
 from thunderseg.utils import merge_coco
 from pycocotools.coco import COCO
 
-fpath = Path('/home/vscode/remotehome/DL_drake/Drake/Ref/Drake20220928_MS.tif')
-shp_path = Path('/home/vscode/remotehome/DL_drake/shp/shp_20220928.shp')
-output_path = Path('/home/vscode/remotehome/DL_drake/output')
+fpath = Path('/home/jldz9/DL/DL_drake/traintaster.tif')
+shp_path = Path('/home/jldz9/DL/DL_drake/shp/shp_20220928.shp')
+output_path = Path('/home/jldz9/DL/DL_drake')
 
-a = Tile(fpth=fpath, output_path=output_path, buffer_size=0, tile_size=100)
-a.tile_image()
+a = Preprocess(fpth=fpath, output_path=output_path, buffer_size=0, tile_size=100)
 a.tile_shape(shp_path)
 a.to_COCO('/home/vscode/remotehome/DL_drake/demo.json')
 print()

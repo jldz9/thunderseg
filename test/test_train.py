@@ -5,7 +5,7 @@ sys.path.append('/home/vscode/remotehome/DL_packages/thunderseg/src')
 import torch
 import numpy as np
 import lightning as L
-from thunderseg.core import Tile, create_project_structure, MaskRCNNModule, LoadDataModule
+from thunderseg.core import Preprocess, create_project_structure, MaskRCNNModule, LoadDataModule
 
 """
 Image preprocess module for thunderseg, include image IO, tilling
