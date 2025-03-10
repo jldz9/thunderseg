@@ -11,8 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
+from colorama import Fore, init
+import fiftyone as fo
 import geopandas as gpd
 import numpy as np
+from PIL import Image
 import rasterio as rio
 from rasterio.io import DatasetReader, MemoryFile
 from rasterio.windows import Window
@@ -22,7 +25,104 @@ from shapely import box
 
 from thunderseg.utils import to_pixelcoord, COCO_parser, window_to_dict, get_mean_std, assert_json_serializable
 
-class Tile: 
+class Preprocess_v2:
+    """Preprocess module for image IO, tilling.
+    
+    Use to tile input raster into certain give size tiles, add buffer around tiles to reduce edge effect. 
+
+    version 2:
+    - Use fiftyone for image and annotation management
+    """
+    def __init__(self,
+                 fpth: str,
+                 output_path: str = '.',
+                 tile_size : int = 236,
+                 buffer_size : int = 10,
+                 tile_mode = 'meter',
+                 band_mode = 'BGR', 
+                 ):
+        """ Initializes parameters"""
+        self.fpth = Path(fpth).absolute()
+        self.fodataset = fo.Dataset(name=self.fpth.stem)
+        self.output_path = Path(output_path).absolute() / self.fpth.stem
+        self.tile_size = tile_size
+        self.buffer_size = buffer_size
+        self.tile_mode = tile_mode
+        self.band_mode = band_mode
+
+    def _get_window(self):
+        """Make rasterio windows for raster tiles, pad original dataset to makesure all tiles size looks the same.
+        Tiles will overlap on right and bottom buffer.         
+        """
+        with rio.open(self.fpth) as oridataset: 
+            profile = oridataset.profile.copy()
+            y = profile['height']
+            x = profile['width']
+            transform = oridataset.profile['transform']
+            # Convert meter tile size to pixel tile size
+            if self.tile_mode == 'meter':
+                tile_size_pixel_x = int(np.ceil(self.tile_size / oridataset.res[0]))
+                tile_size_pixel_y = int(np.ceil(self.tile_size / oridataset.res[1]))
+                buffer_size_pixel_x = int(np.ceil(self.buffer_size / oridataset.res[0]))
+                buffer_size_pixel_y = int(np.ceil(self.buffer_size / oridataset.res[1]))
+            elif self.tile_mode == 'pixel':
+                tile_size_pixel_x = self.tile_size
+                tile_size_pixel_y = self.tile_size
+                buffer_size_pixel_x = self.buffer_size
+                buffer_size_pixel_y = self.buffer_size
+
+            # Calculate number of tiles along height and width with buffer.
+            n_tiles_x = int(np.ceil((x + buffer_size_pixel_x) / (buffer_size_pixel_x + tile_size_pixel_x)))
+            n_tiles_y = int(np.ceil((y + buffer_size_pixel_y) / (buffer_size_pixel_y + tile_size_pixel_y)))
+            
+            # Add buffer to original raster to make sure every tiles has same size.
+            data = oridataset.read()
+            data = np.where(data<0, 0, data)
+            pad = ((0,0),
+                    (buffer_size_pixel_y, n_tiles_y * (tile_size_pixel_y + buffer_size_pixel_y) - y),
+                    (buffer_size_pixel_x, n_tiles_x * (tile_size_pixel_x + buffer_size_pixel_x) - x)
+                    )
+            self.padded_data = np.pad(data, pad_width=pad, mode='constant', constant_values=0)
+            self.profile = profile.update({
+                'height': self.padded_data.shape[1],
+                'width': self.padded_data.shape[2],
+                'transform': Affine(transform[0],transform[1], transform[2]- buffer_size_pixel_x*transform[0],
+                                    transform[3],transform[4], transform[5]- buffer_size_pixel_x*transform[4])
+            })
+
+            # Make meshgrid to create 2d (x,y) index of all tiles
+            tile_index_x, tile_index_y = np.meshgrid(np.arange(n_tiles_x), np.arange(n_tiles_y))
+            flat_tile_x = tile_index_x.flatten()
+            flat_tile_y = tile_index_y.flatten()
+
+            # Make windows for all tiles.
+            self.windows = [
+                Window(
+                max(((start_x * (tile_size_pixel_x + (2 * buffer_size_pixel_x)) - start_x * buffer_size_pixel_x), 0)),
+                max(((start_y * (tile_size_pixel_y + (2 * buffer_size_pixel_y)) - start_y * buffer_size_pixel_x), 0)),
+                tile_size_pixel_x + 2 * buffer_size_pixel_x,
+                tile_size_pixel_y + 2 * buffer_size_pixel_y,
+                ) 
+                for start_x, start_y in zip(flat_tile_x, flat_tile_y)
+                ]
+            
+    def _raster_gt_tile_size(self):
+        """Check if raster size is larger than tile size + 2*buffer_size on both height and width, if not, return False to prevent tilling."""
+        with rio.open(self.fpth) as dataset:
+            x = dataset.width * dataset.res[0]
+            y = dataset.height * dataset.res[1]
+            if x < self._tile_size + 2 * self._buffer_size or y < 2 * self._buffer_size + self._tile_size:
+                print(f'{Fore.YELLOW}Raster size ({x} x{y})is smaller than input tile + 2*buffer size ({self._tile_size}, 2*{self._buffer_size}), \
+                      please change your tile and buffer size')
+                return False
+            else:
+                return True
+        
+    
+
+
+
+class Preprocess: 
     """Preprocess module for image IO, tilling.
     
     Use to tile input raster into certain give size tiles, add buffer around tiles to reduce edge effect. 
@@ -33,6 +133,7 @@ class Tile:
                  tile_size : int = 236,
                  buffer_size : int = 10,
                  tile_mode = 'meter',
+                 band_mode = 'BGR', 
                  ):
         """ Initializes parameters
         Args:
@@ -44,8 +145,16 @@ class Tile:
             debug: Switch to turn on debug
         """
         self.fpth = Path(fpth).absolute()
+        self.fodataset = fo.Dataset(name=self.fpth.stem)
         self._output_path = Path(output_path).absolute()
-        self._output_path.mkdir(exist_ok=True)
+        self._output_path = self._output_path / self.fpth.stem
+        self._annotations_path = self._output_path / 'annotations'
+        self._img_path = self._output_path / 'imgs'
+        self._raster_path = self._output_path / 'rasters'
+        self._output_path.mkdir(exist_ok=True, parents=True)
+        self._annotations_path.mkdir(exist_ok=True, parents=True)
+        self._img_path.mkdir(exist_ok=True, parents=True)
+        self._raster_path.mkdir(exist_ok=True, parents=True)
         self._tile_size = tile_size
         if not isinstance(self._tile_size, int):
             raise TypeError(f"Tile_size tuple should be Int, not {type(self.tile_width)}")
@@ -65,7 +174,66 @@ class Tile:
                              'area':[],
                              'iscrowd':[],
                              'segmentation':[]} 
+        self.band_mode = band_mode
         self.tile_mode = tile_mode
+        # ------
+        # run image preprocessing
+        # ------
+        if self._raster_gt_tile_size():
+            self.tile_image()
+        else:
+            oridataset = rio.open(self.fpth)
+            profile = oridataset.profile.copy()
+            if self.band_mode == 'BGR':
+                band = 3
+            elif self.band_mode == 'MS':
+                band = oridataset.count
+            sample = fo.Sample(filepath=self.fpth.as_posix(),
+                               metadata=fo.ImageMetadata(width=profile['width'], height=profile['height'],num_channels=band),
+                               ground_truth=fo.Detections(
+                                   detections=[
+                                       
+                                   ]
+                                   
+                               ))
+            y = profile['height']
+            x = profile['width']
+             
+            profile.update({'count': band})
+            transform = oridataset.profile['transform']
+            self._images['id'].append(1)
+            filename = f'{self._output_path}/{self.fpth.stem}_preprocess.tif'
+            self._images['file_name'].append(filename)
+            self._images['width'].append(x)
+            self._images['height'].append(y)
+            self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            data = oridataset.read()[0:band,:,:]
+            self.to_file(filename, data, profile, mode=self.band_mode)
+            self.to_png(data, Path(filename).with_suffix('.png').as_posix())
+            data = data.reshape(1, band, y, x)
+            mean, std = get_mean_std(data)
+            self._report = {'file_name': self.fpth.as_posix(),
+                            'output_path': self._output_path.as_posix(),
+                            'tile_size': x,
+                            'buffer_size': 0,
+                            'tile_numbers': 1,
+                        'original_size': str(rio.open(self.fpth).shape),
+                        'buffed_size': str(oridataset.shape),
+                        'crs': str(oridataset.crs.to_epsg()),
+                        'band': band,
+                        'affine': (transform.a, 
+                                transform.b,
+                                transform.c,
+                                transform.d,
+                                transform.e,
+                                transform.f),
+                        'driver': oridataset.profile['driver'],
+                        'dtype':  oridataset.profile['dtype'],
+                        'nodata': oridataset.profile['nodata'],
+                        'pixel_mean' : [float(i) for i in mean],
+                        'pixel_std' : [float(i) for i in std],
+                        'mode': self.band_mode
+                        }
 
     def _get_window(self):
         """Make rasterio windows for raster tiles, pad original dataset to makesure all tiles size looks the same.
@@ -127,40 +295,24 @@ class Tile:
             dst.write(padded_data)
         self._dataset = memfile.open()
 
-    def resample(self, new_resolution: float):
-        """Resample original raster to certain resolution (meter).
-        Args: 
-            new_resolution: the resolution of new raster
-        """
-        print(f'Resampling raster to {new_resolution} m')
-        with rio.open(self.fpth) as ori_dataset:
-            ori_dataset = rio.open(self.fpth)
-            profile = ori_dataset.profile.copy()
-            old_transform = profile['transform']
-            new_width= int(np.round((ori_dataset.bounds.right - ori_dataset.bounds.left) / new_resolution))
-            new_height = int(np.round((ori_dataset.bounds.top - ori_dataset.bounds.bottom) / new_resolution))
-            profile.update({
-                'height': new_height,
-                'width': new_width,
-                'transform': Affine(new_resolution, old_transform.b, old_transform.c, 
-                                    old_transform.d, -new_resolution, old_transform.f)
-
-            })
-            data = ori_dataset.read(
-                out_shape = (ori_dataset.count, new_height, new_width),
-                resampling = Resampling.gauss
-            )
-        memfile = MemoryFile()
-        with memfile.open(**profile) as dst:
-            dst.write(data)
-        self._dataset = memfile.open()
-
-    def tile_image(self, mode='BGR', shp_path: str = None):
+    def _raster_gt_tile_size(self):
+        """Check if raster size is larger than tile size, if not, raise error."""
+        with rio.open(self.fpth) as dataset:
+            x = dataset.width * dataset.res[0]
+            y = dataset.height * dataset.res[1]
+            if x < self._tile_size + 2 * self._buffer_size or y < 2 * self._buffer_size + self._tile_size:
+                print(f'{Fore.YELLOW}Raster size ({x} x{y})is smaller than input tile + 2*buffer size ({self._tile_size}, 2*{self._buffer_size}), \
+                      please change your tile and buffer size')
+                return False
+            else:
+                return True
+        
+    def tile_image(self, shp_path: str = None):
         """Cut input image into square tiles with buffer and preserver geoinformation for each tile."""         
-        if mode == 'BGR':
+        if self.band_mode == 'BGR':
             band = 3
-        elif mode == 'MS':
-            band = self._dataset.count
+        elif self.band_mode == 'MS':
+            band = self._dataset.count   
         self._get_window()
         tiles_list = []
         self._profiles = []
@@ -179,13 +331,14 @@ class Tile:
             sys.stdout.write(f'\rWorking on: {idx+1}/{num_tiles} image tile')
             sys.stdout.flush()
             self._images['id'].append(idx+1)
-            filename = f'{self._output_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.tif'
-            self._images['file_name'].append(filename)
+            filename_raster = f'{self._raster_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.tif'
+            filename_img = f'{self._img_path}/{self.fpth.stem}_row{window.row_off}_col{window.col_off}.png'
+            self._images['file_name'].append(filename_raster)
             self._images['width'].append(window.width)
             self._images['height'].append(window.height)
             self._images['date_captured'].append(datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            self.to_file(filename, tile_data, tile_profile, mode=mode)
-            self.to_png(tile_data, Path(filename).with_suffix('.png').as_posix())
+            self.to_file(filename_raster, tile_data, tile_profile, mode=self.band_mode)
+            self.to_png(tile_data, filename_img)
         print()
         self._stack_tiles = np.stack(tiles_list, axis=0)
         self._stack_tiles = self._stack_tiles[:,0:band, :,:] # Make sure if use BGR mode will export only frist 3 bands
@@ -210,7 +363,7 @@ class Tile:
                         'nodata':self._dataset.profile['nodata'],
                         'pixel_mean' : [float(i) for i in mean],
                         'pixel_std' : [float(i) for i in std],
-                        'mode': mode
+                        'mode': self.band_mode
                         }
         if shp_path is not None and Path(shp_path).is_file():
             self.tile_shape(shp_path)
@@ -255,7 +408,7 @@ class Tile:
                     self._annotations['iscrowd'].append(row.iscrowd)
                     self._annotations['segmentation'].append(pixel_coord)
 
-    def to_COCO(self, output_path: str = None, **kwargs) -> str:
+    def to_COCO(self, **kwargs) -> str:
         """Convert input images and annotations to COCO format.
         Args:
             kwargs: Meta data provided to this method that store in "Info" section. Needs to be json serializable. 
@@ -267,7 +420,7 @@ class Tile:
         kwargs["date_created"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         assert_json_serializable(**kwargs)
         self._coco = COCO_parser(kwargs)
-        self._coco.add_categories(id = [1], name=['shurb'], supercategory=['plant'])
+        self._coco.add_categories(id = [1], name=['shrub'], supercategory=['plant']) #TODO No hard coded for category in the furture
         self._coco.add_licenses(license_id=[1],license_url=[''],license_name=[''])
         self._coco.add_images(id = self._images['id'], 
                         file_name = self._images['file_name'],
@@ -288,13 +441,19 @@ class Tile:
                                 segmentation = self._annotations['segmentation'],
                                 bbox_mode='xywh'
                                 )
-        if output_path is not None:
-            self._coco_path = Path(output_path)
-        else:
-            self._coco_path = f'{self._output_path}/{self.fpth.stem}_coco.json'
-        self._coco.save_coco(self._coco_path)
-        print(f'COCO saved at {self._coco_path}')
-        return self._coco_path
+        self._coco_img = self._coco
+        for image in self._coco_img.dict['images']:
+            image['file_name'] = image['file_name'].replace('.tif', '.png')
+        
+       
+      
+        coco_path = f'{self._annotations_path}/{self.fpth.stem}_coco_raster.json'
+        coco_img_path = f'{self._annotations_path}/{self.fpth.stem}_coco_img.json'
+        self._coco.save_coco(coco_path)
+        self._coco_img.save_coco(coco_img_path)
+        print(f'COCO_img saved at {coco_img_path}\nCOCO_raster saved at {coco_path}')
+              
+        return coco_path, coco_img_path
     
     @property
     def data(self):
@@ -337,15 +496,16 @@ class Tile:
         band1 = data[0] # B
         band2 = data[1] # G
         band3 = data[2] # R
-        stack = np.stack([band1, band2, band3], axis=0)
-        stack = np.transpose(stack, (1,2,0))
+        stack = np.stack([band3, band2, band1], axis=2)
+        stack[stack <-1000] = 0 # Remove negative value in the raster that represent empty value 
         min_val = np.min(stack)  # Minimum value in the array
         max_val = np.max(stack)
         if max_val == min_val:
-            normalized_array = np.zeros_like(stack, dtype=np.float32)  # or np.ones_like(array, dtype=np.float32)
+            normalized_array = np.zeros_like(stack, dtype=np.uint8)  # or np.ones_like(array, dtype=np.float32)
         else:
-            normalized_array = (stack - min_val) / (max_val - min_val) * 255
-        
-        array_rgb = cv2.cvtColor(normalized_array, cv2.COLOR_BGR2RGB)
-        cv2.imwrite(path_to_file, array_rgb)
+            normalized_array = ((stack - min_val) / (max_val - min_val) * 255).astype(np.uint8)
+        image = Image.fromarray(normalized_array, mode='RGB')
+        image.save(path_to_file, dpi=(300,300))
+       
 
+ 
