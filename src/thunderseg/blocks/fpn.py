@@ -3,10 +3,10 @@ import torch.nn as nn
 
 from torchvision.ops import FeaturePyramidNetwork
 
-from thunderseg.blocks.attention import SEBlock, CBAM
+from thunderseg.blocks.attention import SE, CBAM
 
 class SE_FPN(FeaturePyramidNetwork):
-    """A simple attention FPN implementation use SqueezeExcitation. Add SEBlock to each FPN output for more accurate feature selection.
+    """A simple attention FPN implementation use SqueezeExcitation. Add SE to each FPN output for more accurate feature selection.
     """
     def __init__(
         self,
@@ -24,13 +24,13 @@ class SE_FPN(FeaturePyramidNetwork):
             )
         # Add se block for each FPN output
         self.se_blocks = nn.ModuleList([
-            SEBlock(out_channels, attention_channels)
+            SE(out_channels, attention_channels)
             for _ in in_channels_list
         ])
     def forward(self, inputs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         # Use original FPN forward
         results = super().forward(inputs)
-        # Apply SEBlock to each FPN output
+        # Apply SE to each FPN output
         for key, se in zip(results.keys(), self.se_blocks):
             results[key] = se(results[key])
         return results
