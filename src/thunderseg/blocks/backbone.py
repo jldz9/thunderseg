@@ -87,9 +87,14 @@ class HR_ResNet(nn.Module):
             layers.append(block(inplanes, planes))
         return nn.Sequential(*layers)
 
-def hr_resnet_fpn():
+def hr_resnet_cbamfpn():
     backbone = HR_ResNet()
     in_channels_list = [256, 512, 256] #C2:256, C3:512, C4:256
     out_channels = 128
     fpn = CBAM_FPN(in_channels_list, out_channels=out_channels) # Reduce channels to 128 to increase speed
-    return BackboneWithGivenFPN(backbone=backbone, fpn=fpn, in_channels_list=in_channels_list, out_channels=out_channels, return_layers={"layer1":"C2", "layer2":"C3", "layer3_reduce":"C4"})
+    return BackboneWithGivenFPN(backbone=backbone, 
+                                fpn=fpn, 
+                                in_channels_list=in_channels_list, 
+                                out_channels=out_channels, 
+                                return_layers={"layer1":"P2", "layer2":"P3", "layer3_reduce":"P4"})
+    
