@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from torchvision.ops import SqueezeExcitation
 
-class SEBlock(nn.Module):
+class SE(nn.Module):
     """Squeeze-and-Excitation block. Use torchvision.ops.SqueezeExcitation, check more info at https://arxiv.org/abs/1709.01507
         If no squeeze_channels is provided, it will be calculated as input_channels // reduction_ratio.
     """
@@ -23,11 +23,11 @@ class SEBlock(nn.Module):
 
 class CBAM(nn.Module):
     """Convolutional Block Attention Module for both channel and spatial attention. 
-    Use SEBlock and add Channel Attention to the original SEBlock.
+    Use SE and add Channel Attention to the original SE.
     """
     def __init__(self, input_channels: int, squeeze_channels: int = None):
         super().__init__()
-        self.channel_attention = SEBlock(input_channels, reduction_ratio=8)
+        self.channel_attention = SE(input_channels, reduction_ratio=8)
         self.spatial_attention = nn.Sequential(
             nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False),
             nn.Sigmoid()
@@ -40,4 +40,5 @@ class CBAM(nn.Module):
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         spatial_weights = self.spatial_attention(torch.cat([avg_out, max_out], dim=1))
         return x * spatial_weights
+
 
