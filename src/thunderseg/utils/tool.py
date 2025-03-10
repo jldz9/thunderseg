@@ -39,7 +39,6 @@ class BackboneWithGivenFPN(BackboneWithFPN):
         ) -> None:
             super().__init__(backbone, return_layers, in_channels_list, out_channels, extra_blocks, norm_layer)
             fpn: nn.Module
-            
         
 class COCO_parser:
     """COCO JSON format parser for images.
@@ -182,11 +181,19 @@ class COCO_parser:
 class Config(SimpleNamespace):
     def __init__(self, config_path=None, **kwargs):
         if config_path is not None: 
-            with open(config_path, 'rb') as f:
-                toml = tomllib.load(f)
-            kwargs.update(toml)
-        super().__init__(**{k: self._convert(v) for k, v in kwargs.items()})
-    
+            config_path = Path(config_path)
+            if config_path.is_file():
+                with open(config_path, 'rb') as f:
+                    toml = tomllib.load(f)
+                kwargs.update(toml)
+            else:
+                raise FileNotFoundError(f"Config file not found: {config_path}")
+        try:
+            converted_kwargs = {k: self._convert(v) for k, v in kwargs.items()}
+        except RecursionError:
+            raise ValueError("Recursive reference detected in config data.")
+        super().__init__(**converted_kwargs)
+
     def _convert(self, value):
         """Convert nested dictionaries to Config."""
         if isinstance(value, dict):
@@ -383,6 +390,12 @@ def get_mean_std(data: np.ndarray) -> tuple:
         mean = np.mean(data, axis=(0,2,3))
         std = np.std(data, axis=(0,2,3))
         return mean, std
+
+def get_config(config_path=None):
+    if config_path is None:
+        config_path = Path(__file__).parent/'config.toml'
+    cfg = Config(config_path=config_path)
+    return cfg
 
 def merge_coco(coco_fpths: tuple | list, output_path: str = None):
     """Merge multiple coco files into one coco file, update corresponding ids
