@@ -17,23 +17,29 @@ import rasterio as rio
 import torch
 import torch.utils.data
 from torch.utils.data import Dataset, DataLoader, random_split
+from torchvision.models.detection import maskrcnn_resnet50_fpn_v2
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 torch.set_float32_matmul_precision('high')
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as maskUtils
 
 from thunderseg.utils import bbox_from_mask, Config
-from thunderseg.blocks.backbone import Highres_ResNet
+from thunderseg.blocks.backbone import hr_resnet_cbamfpn
+from thunderseg.blocks.rpn import rpn_small_obj
 
-cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
+
+
+#cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
 
 def get_transform(image:np.ndarray, 
                   target:dict={}, 
                   flag = 'train', 
                   mean:list = [0.485, 0.456, 0.406], 
                   std: list = [0.229, 0.224, 0.225],
-                  RandomCrop_height:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT,
-                  RandomCrop_width:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH):
+                  RandomCrop_height:int = 1,
+                  RandomCrop_width:int = 1):
     """
     Apply transform to both image and target using Albumentations, 
     Args:
@@ -41,29 +47,8 @@ def get_transform(image:np.ndarray,
         target: should be a dict contains bbox, mask, 
     """
 
-    three_channel_image_only_transform = A.Compose(
-        [A.SomeOf([ 
-        #A.PlanckianJitter(),
-        A.RandomBrightnessContrast(brightness_limit=(-0.1, 0.1), contrast_limit=(-0.1, 0.1)),
-        A.RandomToneCurve(),
-        ], n=1, p=0.5)
-        ])
-    
-    image_only_transform = A.Compose([A.SomeOf([
-        A.Downscale(scale_range=(0.5, 1)),
-        #A.GaussNoise(noise_scale_factor=0.5),
-        #A.Sharpen(),
-        A.AdvancedBlur(),
-        A.Defocus(),
-        A.MotionBlur(allow_shifted=False)
-    ], n=2, p=0.5),
-    A.Normalize(mean=mean, std=std, max_pixel_value=1)])
-
-    image_and_target_transform = A.Compose([A.SomeOf([
-        A.HorizontalFlip(),
-        A.RandomRotate90(),
-    ], n=2, p=0.5),
-    A.RandomCrop(height=RandomCrop_height, 
+    transform = A.Compose([
+    A.AtLeastOneBBoxRandomCrop(height=RandomCrop_height, 
                  width=RandomCrop_width),
     ToTensorV2()])
 
@@ -294,22 +279,24 @@ class LoadDataModule(L.LightningDataModule):
                           num_workers=self.num_workers)
     
 class MaskRCNN_RGB_Highres(L.LightningModule):
-    def __init__(self, num_classes: int = 2, learning_rate: float = 1e-3):
+    def __init__(self, num_classes: int = 1, learning_rate: float = 1e-3):
         super().__init__()
         # Load maskrcnn model from torchvision
-        backbone = Highres_ResNet()
-        return_layers = {'C1': '0', 'C2': '1', 'C3': '2'}
+        
         self.model = maskrcnn_resnet50_fpn_v2(weights='DEFAULT')
+        self.model.backbone = hr_resnet_cbamfpn()
+        self.model.rpn = rpn_small_obj(self.model.backbone.out_channels)
 
-        # Replace the pre-trained head with a new one
+        # Replace the predict class to the number of classes defined in the provided coco dataset, original predict output 80 classes.
         in_features = self.model.roi_heads.box_predictor.cls_score.in_features
-        self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes)
+        self.model.roi_heads.box_predictor = FastRCNNPredictor(in_features, num_classes+1)
 
         # Get the number of input features for the mask classifier
         in_features_mask = self.model.roi_heads.mask_predictor.conv5_mask.in_channels
         hidden_layer = 256
 
-        # Replace the mask predictor with a new one
+        # Originally the mask predictor has 256 input features, 256 hidden layer, and 80 output features, replace the output features to the number of classes 
+        # provided in the coco dataset
         self.model.roi_heads.mask_predictor = MaskRCNNPredictor(in_features_mask, hidden_layer, num_classes)
         self.learning_rate = learning_rate
         self.validation_step_outputs = []
