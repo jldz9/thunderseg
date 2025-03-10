@@ -27,15 +27,15 @@ from pycocotools import mask as maskUtils
 
 from thunderseg.utils import bbox_from_mask, Config
 
-cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
+#cfg = Config((Path(__file__).parents[1] / 'utils/config.toml').resolve())
 
 def get_transform(image:np.ndarray, 
                   target:dict={}, 
                   flag = 'train', 
                   mean:list = [0.485, 0.456, 0.406], 
                   std: list = [0.229, 0.224, 0.225],
-                  RandomCrop_height:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT,
-                  RandomCrop_width:int = cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_WIDTH):
+                  RandomCrop_height:int = 1,
+                  RandomCrop_width:int = 1):
     """
     Apply transform to both image and target using Albumentations, 
     Args:
