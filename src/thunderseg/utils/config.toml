@@ -10,7 +10,7 @@ PREDICT_RASTER_DIR = "/" # Your Path to the prediction raster directory
 TILE_SIZE = 100 # meter
 BUFFER_SIZE = 10 # meter
 DEBUG = false
-MODE = "BGR"
+BAND_MODE = "BGR"
 
 [PREPROCESS.RESAMPLE]
 ENABLE = false
