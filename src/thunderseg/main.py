@@ -21,9 +21,9 @@ from colorama import Fore, init
 init(autoreset=True)
 
 from pycocotools.coco import COCO
-from thunderseg.core import Tile, Train, Postprocess
+from thunderseg.core import Preprocess, Train, Postprocess
 from thunderseg.utils import merge_coco, Config, create_project_structure
-from thunderseg.model import maskrcnn_rgb
+from thunderseg.model import maskrcnn_rgb, maskrcnn_rgb_highres
 from thunderseg._version import __version__
 
 def create_parser():
@@ -120,8 +120,8 @@ def preprocess_step(args):
     valid_coco_list = []
     for r in train_rasters:
         print(f'{Fore.GREEN}Processing train raster {r.stem}')
-        train_r = Tile(fpth=r, output_path=cfg.IO.TRAIN, buffer_size=cfg.PREPROCESS.BUFFER_SIZE, tile_size=cfg.PREPROCESS.TILE_SIZE)
-        train_r.tile_image(mode=cfg.PREPROCESS.MODE, shp_path=cfg.IO.TRAIN_SHP+'/train_shp.shp')
+        train_r = Preprocess(fpth=r, output_path=cfg.IO.TRAIN, buffer_size=cfg.PREPROCESS.BUFFER_SIZE, tile_size=cfg.PREPROCESS.TILE_SIZE, band_mode=cfg.PREPROCESS.BAND_MODE)
+        train_r.tile_image(shp_path=cfg.IO.TRAIN_SHP+'/train_shp.shp')
         coco_path = train_r.to_COCO(cfg.IO.TEMP + f'/{r.stem}_coco.json', **cfg.PREPROCESS.COCO_INFO.to_dict())
         train_coco_list.append(coco_path)
         if cfg.TRAIN.SEPE_VAL:
@@ -168,6 +168,22 @@ def train_step(args):
                       save_path = cfg.IO.RESULT,
                                                   )# TODO add path to checkpointpath and also add callbacks
         train.fit()
+    if cfg.TRAIN.MODEL == 'maskrcnn_rgb_highres':
+        train = Train(
+            maskrcnn_rgb_highres.MaskRCNN_RGB_Highres,
+            maskrcnn_rgb_highres.LoadDataModule,
+            train_coco=coco_train,
+            validate_coco=coco_valid,
+            predict_coco=None,
+            batch_size=cfg.TRAIN.BATCH_SIZE,
+            num_workers=cfg.TRAIN.NUM_WORKERS,
+            num_classes=cfg.TRAIN.NUM_CLASSES,
+            learning_rate = cfg.TRAIN.LEARNING_RATE,
+            max_epochs = cfg.TRAIN.MAX_EPOCHS,
+            save_path = cfg.IO.RESULT,
+        )
+        train.fit()
+
 
     cfg.to_file(cfg_path)
 
@@ -195,7 +211,7 @@ def predict_step(args):
         predict_coco_list = []
         for p in predict_rasters:
             print(f'{Fore.GREEN}Processing predict raster {p.stem}')
-            predict_r = Tile(fpth=p, output_path = cfg.IO.PREDICT, buffer_size=50, tile_size=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT-100, tile_mode='pixel')
+            predict_r = Preprocess(fpth=p, output_path = cfg.IO.PREDICT, buffer_size=50, tile_size=cfg.PREPROCESS.TRANSFORM.RANDOM_CROP_HEIGHT-100, tile_mode='pixel')
             predict_r.tile_image(mode=cfg.PREPROCESS.MODE)
             coco_path = predict_r.to_COCO(cfg.IO.TEMP + f'/{p.stem}_coco_predict.json')
             predict_coco_list.append(coco_path)
@@ -216,6 +232,25 @@ def predict_step(args):
                       save_path = cfg.IO.RESULT,
                       ckpt_path=cfg.IO.CHECKPOINT
                                                   )
+        result = predict.predict() 
+        postprocess = Postprocess(predict_coco, result, cfg.IO.RESULT)
+        postprocess.mask_rcnn_postprocess()
+    
+    if cfg.TRAIN.MODEL == 'maskrcnn_rgb_highres':
+        predict = Train(
+            maskrcnn_rgb_highres.MaskRCNN_RGB_Highres,
+            maskrcnn_rgb_highres.LoadDataModule,
+            coco_train,
+            validate_coco = None,
+            predict_coco=predict_coco,
+            batch_size=cfg.TRAIN.BATCH_SIZE,
+            num_workers=cfg.TRAIN.NUM_WORKERS,
+            num_classes=cfg.TRAIN.NUM_CLASSES,
+            learning_rate = cfg.TRAIN.LEARNING_RATE,
+            max_epochs = cfg.TRAIN.MAX_EPOCHS,
+            save_path = cfg.IO.RESULT,
+            ckpt_path=cfg.IO.CHECKPOINT
+        )
         result = predict.predict() 
         postprocess = Postprocess(predict_coco, result, cfg.IO.RESULT)
         postprocess.mask_rcnn_postprocess()
