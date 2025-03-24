@@ -179,19 +179,14 @@ class COCO_parser:
             json.dump(self.COCO, f, indent=4)
 
 class Config(SimpleNamespace):
-    def __init__(self, config_path=None, **kwargs):
-        if config_path is not None: 
-            config_path = Path(config_path)
-            if config_path.is_file():
-                with open(config_path, 'rb') as f:
-                    toml = tomllib.load(f)
-                kwargs.update(toml)
-            else:
-                raise FileNotFoundError(f"Config file not found: {config_path}")
+    """A SimpleNamespace extension that allows for nested dictionaries and attribute access.
+        Use for config file to store hyperparameters and other settings for the entire Thunderseg program
+    """
+    def __init__(self, **kwargs):
         try:
             converted_kwargs = {k: self._convert(v) for k, v in kwargs.items()}
-        except RecursionError:
-            raise ValueError("Recursive reference detected in config data.")
+        except RecursionError as e:
+            raise RecursionError("Recursive reference detected in config data.")
         super().__init__(**converted_kwargs)
 
     def _convert(self, value):
@@ -210,9 +205,13 @@ class Config(SimpleNamespace):
         if name not in self.__dict__:
             if name.startswith('_'):
                 raise AttributeError(name)
+            else:
+                raise AttributeError(f"'Config' object has no attribute '{name}'")
             # Dynamically create a new Config object for missing attributes
-            self.__dict__[name] = Config()
-        return self.__dict__[name]
+            #self.__dict__[name] = Config()
+        else:
+            return self.__dict__[name]
+        raise AttributeError(f"'Config' object has no attribute '{name}'")
     
     def __setattr__(self, name, value):
         """
@@ -392,10 +391,20 @@ def get_mean_std(data: np.ndarray) -> tuple:
         return mean, std
 
 def get_config(config_path=None):
+    """A function to load config file in TOML format"""
     if config_path is None:
-        config_path = Path(__file__).parent/'config.toml'
-    cfg = Config(config_path=config_path)
-    return cfg
+        config_path = Path(__file__).parent/'config.toml'        
+    config_path = Path(config_path)
+    if config_path.is_file():
+        try:
+            with open(config_path, 'rb') as f:
+                toml = tomllib.load(f)
+                cfg = Config(**toml)
+                return cfg
+        except Exception as e:
+                raise ValueError(f"Error loading config file with error {e}, is this a valid config file in TOML format?")
+    else:
+        raise FileNotFoundError(f"Config file not found under {config_path}")
 
 def merge_coco(coco_fpths: tuple | list, output_path: str = None):
     """Merge multiple coco files into one coco file, update corresponding ids
