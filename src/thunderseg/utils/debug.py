@@ -6,7 +6,12 @@ Debug module for thunderseg package
 import matplotlib.pyplot as plt
 import torch
 import numpy as np
+from pathlib import Path
 from matplotlib.patches import Rectangle
+from pycocotools.coco import COCO
+from pycocotools import mask as coco_mask
+from PIL import Image
+
 
 def check_image_target(image, target=None, savepath=None):
     """ Plot a single image with target to check the quality of transform
@@ -52,4 +57,28 @@ def find_cuda_tensors(data, parent_key=""):
         for idx, value in enumerate(data):
             find_cuda_tensors(value, f"{parent_key}[{idx}]")
 
-
+def print_mask(coco, output_path=None):
+    """
+    Print the mask of the COCO dataset.
+    Args:
+        coco: COCO object
+    """
+    coco = COCO(coco)
+    img_ids = coco.getImgIds()
+    for img_id in img_ids:
+        img_info = coco.loadImgs(img_id)[0]
+        ann_ids = coco.getAnnIds(imgIds=img_id)
+        anns = coco.loadAnns(ann_ids)
+        mask_empty_array = np.zeros([img_info['height'], img_info['width']])
+        for ann in anns:
+            mask = coco.annToMask(ann)
+            print(f"Image ID: {img_id}, Annotation ID: {ann['id']}, Mask shape: {mask.shape}")
+            
+            mask_empty_array[mask == 1] = 1
+            mask_empty_array = np.uint8(mask_empty_array * 255)
+    
+        if output_path is not None:
+            Image.fromarray(mask_empty_array).save(f"{output_path}/{Path(img_info['file_name']).stem}_mask.png")
+        else:
+            Image.fromarray(mask_empty_array).save(f"{Path.cwd()}/{Path(img_info['file_name']).stem}_mask.png")
+    return True
