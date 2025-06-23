@@ -37,6 +37,8 @@ nav:
   - Getting Start: 
     - Installation: getting_start/index.md
     - Basic Usage: getting_start/basic_usage.md
+  - Structure: 
+    - Main Program: flowchart/main_program.md
   - About: about.md
 
 extra:
@@ -64,7 +66,11 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - tables
   - md_in_html
   - pymdownx.blocks.caption
