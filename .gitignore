@@ -3,3 +3,4 @@ test/test.py
 *.pyc
 .vscode/ltex.dictionary.en-US.txt
 .vscode/ltex.hiddenFalsePositives.en-US.txt
+site
