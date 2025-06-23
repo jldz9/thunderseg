@@ -31,5 +31,5 @@ jobs:
       - run: pip install mkdocs-material mike
       - run: |
            VERSION=${GITHUB_REF##*/}
-           mike deploy $VERSION latest --push --update-aliases  
+           mike deploy --push --update-aliases $VERSION latest   
            mike set-default latest --push 
