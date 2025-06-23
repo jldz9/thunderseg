@@ -14,7 +14,7 @@ jobs:
       - name: Configure Git Credentials
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
       - run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
@@ -31,5 +31,5 @@ jobs:
       - run: pip install mkdocs-material mike
       - run: |
            VERSION=${GITHUB_REF##*/}
-           mike deploy --push --update-aliases latest $VERSION
-           mike set-default --push latest
+           mike deploy $VERSION latest --push --update-aliases  
+           mike set-default latest --push 
