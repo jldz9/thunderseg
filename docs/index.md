@@ -1,5 +1,4 @@
 ## Welcome to Thunderseg ! :smile:
-# testtest
 Thunderseg is an open-source package built on top of [pytorch](https://pytorch.org/) and [pytorch-lightning](https://lightning.ai/docs/pytorch/stable/).
 This package focus on deep learning image segmentation tasks for remote sensing applications, including vegetation, cropland, artificial structures, etc. 
 
