@@ -32,4 +32,4 @@ jobs:
       - run: |
            VERSION=${GITHUB_REF##*/}
            mike deploy --push --update-aliases $VERSION latest   
-           mike set-default latest --push 
+           mike set-default $VERSION --push 
