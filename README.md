@@ -1,5 +1,5 @@
 # Welcome to Thunderseg !
-# Was rebrand to [GeoDLkit] https://github.com/jldz9/GeoDLKit
+# Was rebrand to [GeoDLkit](https://github.com/jldz9/GeoDLKit)
 ## This package is under development stage, you may find bugs and incomplete functions when using this package, feature may change during development. 
 Thunderseg is an open-source software package developed on PyTorch and PyTorch Lightning frameworks. It is specifically designed to address deep learning-based image segmentation tasks within the domain of remote sensing.
 
